@@ -13,13 +13,13 @@ Run `cargo run`. Click **Run** to watch the starter program collect ore and buil
 One instruction per line. Instructions are case insensitive; blank lines and `#` comments are supported. The robot starts at home facing east.
 
 - `move(5)` moves up to five squares, one action per square. Walls and chargers block movement. `move()` and `MOVE` move once.
-- `turn(left)`, `turn(right)` and `turn(around)` turn in place. `turn(left, 2)` turns twice. A bare `TURN` turns right once. Counts must be 1–100.
+- `turn(left)`, `turn(right)` and `turn(around)` turn in place. `turn(left, 2)` turns twice; `turn(around, 2)` turns around twice. A bare `TURN` turns right once. Counts must be 1–100.
 - `collect()` picks up one ore at the ore deposit. Capacity is one.
 - `deposit()` stores the carried ore at home.
 - `build(charger)` spends one stored ore to build a charger in the square directly ahead. Build while standing at home, facing a free square. Only one charger can be built for now; it is decorative until batteries are added.
 - `repeat()` jumps back to the beginning. A program without it stops at the end.
 
-Commands with counts expand into individual actions, so Step and the next-action display show each movement or turn separately. Legacy bare commands still work.
+Commands with counts expand into individual actions, so Step executes each movement or turn separately. The next-action display shows the source line being executed. Legacy bare commands still work.
 
 ## Development
 

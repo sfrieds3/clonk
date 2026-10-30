@@ -20,6 +20,7 @@ async fn main() {
     let mut world = World::default();
     let mut source = DEMO.to_string();
     let mut program = parse(&source).unwrap();
+    let mut applied = source.clone();
     let mut running = false;
     let mut elapsed = 0.0;
     let mut delay = 0.45;
@@ -68,6 +69,7 @@ async fn main() {
             match parse(&source) {
                 Ok(next) => {
                     program = next;
+                    applied = source.clone();
                     world = World::default();
                     elapsed = 0.;
                 }
@@ -191,17 +193,15 @@ async fn main() {
             GOLD,
         );
         draw_text(&world.message, 34., 705., 18., WHITE);
-        let instruction = program
+        let next = program
             .get(world.pc)
-            .map(|i| format!("{i:?}").to_uppercase())
+            .map(|i| {
+                let text = applied.lines().nth(i.line).unwrap_or("");
+                let text = text.split('#').next().unwrap_or("").trim();
+                format!("LINE {:02}: {}", i.line + 1, text)
+            })
             .unwrap_or("FINISHED".into());
-        draw_text(
-            format!("NEXT STEP  {:02}: {}", world.pc + 1, instruction),
-            34.,
-            736.,
-            18.,
-            SKYBLUE,
-        );
+        draw_text(format!("NEXT  {next}"), 34., 736., 18., SKYBLUE);
         next_frame().await;
     }
 }

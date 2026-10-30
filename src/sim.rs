@@ -5,7 +5,7 @@ pub const ORE: (i32, i32) = (7, 4);
 pub const DEMO: &str = "# CL-01 builds its first charger!\nmove(5)\ncollect()\nturn(around)\nmove(5)\ndeposit()\nturn(right)\nbuild(charger)";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Instruction {
+pub enum Op {
     Move,
     Turn,
     TurnLeft,
@@ -15,14 +15,26 @@ pub enum Instruction {
     BuildCharger,
 }
 
+/// One executable action, tagged with the zero-based source line it came from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Instruction {
+    pub op: Op,
+    pub line: usize,
+}
+
 pub fn parse(source: &str) -> Result<Vec<Instruction>, String> {
     let mut program = Vec::new();
-    for (line, text) in source.lines().enumerate() {
-        let text = text.split('#').next().unwrap_or("").trim().to_lowercase();
+    for (line, raw) in source.lines().enumerate() {
+        let raw = raw.split('#').next().unwrap_or("").trim();
+        let text = raw.to_lowercase();
         if text.is_empty() {
             continue;
         }
-        let error = || format!("Line {}: invalid instruction: {}", line + 1, text);
+        let error = || format!("Line {}: invalid instruction: {}", line + 1, raw);
+        let count_error = || format!("Line {}: counts must be 1–100: {}", line + 1, raw);
+        let mut push = |op: Op, count: usize| {
+            program.extend(std::iter::repeat_n(Instruction { op, line }, count))
+        };
         let (name, args) = if let Some((name, tail)) = text.split_once('(') {
             let args = tail.strip_suffix(')').ok_or_else(error)?;
             (name.trim(), Some(args.trim()))
@@ -37,42 +49,41 @@ pub fn parse(source: &str) -> Result<Vec<Instruction>, String> {
                     Some(a) => a.parse::<usize>().map_err(|_| error())?,
                 };
                 if !(1..=100).contains(&count) {
-                    return Err(error());
+                    return Err(count_error());
                 }
-                program.extend(std::iter::repeat_n(Instruction::Move, count));
+                push(Op::Move, count);
             }
             "turn" => {
-                let parts: Vec<_> = args.unwrap_or("right").split(',').map(str::trim).collect();
-                let (instruction, default_count) = match parts[0] {
-                    "right" | "" => (Instruction::Turn, 1),
-                    "left" => (Instruction::TurnLeft, 1),
-                    "around" => (Instruction::Turn, 2),
+                let args = args.filter(|a| !a.is_empty()).unwrap_or("right");
+                let parts: Vec<_> = args.split(',').map(str::trim).collect();
+                // `around` is two right turns, so its count is in half turns.
+                let (op, turns_per_count) = match parts[0] {
+                    "right" => (Op::Turn, 1),
+                    "left" => (Op::TurnLeft, 1),
+                    "around" => (Op::Turn, 2),
                     _ => return Err(error()),
                 };
-                if parts.len() > 2 {
-                    return Err(error());
-                }
-                let count = if parts.len() == 2 {
-                    parts[1].parse::<usize>().map_err(|_| error())?
-                } else {
-                    default_count
+                let count = match parts.as_slice() {
+                    [_] => 1,
+                    [_, count] => count.parse::<usize>().map_err(|_| error())?,
+                    _ => return Err(error()),
                 };
                 if !(1..=100).contains(&count) {
-                    return Err(error());
+                    return Err(count_error());
                 }
-                program.extend(std::iter::repeat_n(instruction, count));
+                push(op, count * turns_per_count);
             }
-            "collect" if empty() => program.push(Instruction::Collect),
-            "deposit" if empty() => program.push(Instruction::Deposit),
-            "repeat" if empty() => program.push(Instruction::Repeat),
-            "build" if args == Some("charger") => program.push(Instruction::BuildCharger),
+            "collect" if empty() => push(Op::Collect, 1),
+            "deposit" if empty() => push(Op::Deposit, 1),
+            "repeat" if empty() => push(Op::Repeat, 1),
+            "build" if args == Some("charger") => push(Op::BuildCharger, 1),
             _ => return Err(error()),
         }
         if program.len() > 10000 {
             return Err(format!("Line {}: program is too large", line + 1));
         }
     }
-    if program.is_empty() {
+    if program.iter().all(|i| i.op == Op::Repeat) {
         return Err("Give your little robot an instruction.".into());
     }
     Ok(program)
@@ -123,8 +134,8 @@ impl World {
         };
         self.ticks += 1;
         self.pc += 1;
-        self.message = match instruction {
-            Instruction::Move => {
+        self.message = match instruction.op {
+            Op::Move => {
                 let delta = [(1, 0), (0, 1), (-1, 0), (0, -1)][self.direction];
                 let next = (self.position.0 + delta.0, self.position.1 + delta.1);
                 if wall(next.0, next.1) || self.charger == Some(next) {
@@ -134,15 +145,15 @@ impl World {
                     "Small steps. Questionable ambitions."
                 }
             }
-            Instruction::Turn => {
+            Op::Turn => {
                 self.direction = (self.direction + 1) % 4;
                 "Turning clockwise. A fresh perspective."
             }
-            Instruction::TurnLeft => {
+            Op::TurnLeft => {
                 self.direction = (self.direction + 3) % 4;
                 "Turning counterclockwise. Fancy."
             }
-            Instruction::BuildCharger => {
+            Op::BuildCharger => {
                 let delta = [(1, 0), (0, 1), (-1, 0), (0, -1)][self.direction];
                 let target = (self.position.0 + delta.0, self.position.1 + delta.1);
                 if self.position != START {
@@ -159,7 +170,7 @@ impl World {
                     "Charger built! Power functionality coming soon."
                 }
             }
-            Instruction::Collect => {
+            Op::Collect => {
                 if self.carrying {
                     "Pockets full. Pocket, singular."
                 } else if self.position == ORE && self.ore > 0 {
@@ -170,7 +181,7 @@ impl World {
                     "No ore here. Confidence remains unaffected."
                 }
             }
-            Instruction::Deposit => {
+            Op::Deposit => {
                 if self.position == START && self.carrying {
                     self.carrying = false;
                     self.delivered += 1;
@@ -179,7 +190,7 @@ impl World {
                     "Deposit requires a rock and the depot."
                 }
             }
-            Instruction::Repeat => {
+            Op::Repeat => {
                 self.pc = 0;
                 "Again! Management loves consistency."
             }
@@ -192,6 +203,12 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn ops(source: &str) -> Vec<Op> {
+        parse(source).unwrap().iter().map(|i| i.op).collect()
+    }
+    fn program(ops: &[Op]) -> Vec<Instruction> {
+        ops.iter().map(|&op| Instruction { op, line: 0 }).collect()
+    }
     #[test]
     fn demo_builds_charger_and_conserves_ore() {
         let mut world = World::default();
@@ -209,26 +226,48 @@ mod tests {
     #[test]
     fn invalid_build_does_not_spend_ore() {
         let mut world = World::default();
-        world.step(&[Instruction::BuildCharger]);
+        world.step(&program(&[Op::BuildCharger]));
         assert_eq!(world.charger, None);
         assert_eq!(world.delivered, 0);
     }
     #[test]
     fn arguments_expand_and_old_commands_still_work() {
+        use Op::*;
         assert_eq!(
-            parse("move(2)\nturn(left, 2)\nturn(around)\nCOLLECT").unwrap(),
-            vec![
-                Instruction::Move,
-                Instruction::Move,
-                Instruction::TurnLeft,
-                Instruction::TurnLeft,
-                Instruction::Turn,
-                Instruction::Turn,
-                Instruction::Collect
-            ]
+            ops("move(2)\nturn(left, 2)\nturn(around)\nCOLLECT"),
+            vec![Move, Move, TurnLeft, TurnLeft, Turn, Turn, Collect]
         );
         assert!(parse("move(0)").is_err());
         assert!(parse("turn(up)").is_err());
+        assert!(parse("turn(, 2)").is_err());
+        assert_eq!(ops("turn()"), vec![Turn]);
+    }
+    #[test]
+    fn turn_around_count_is_in_half_turns() {
+        assert_eq!(ops("turn(around, 2)"), vec![Op::Turn; 4]);
+        assert_eq!(ops("turn(around, 1)"), vec![Op::Turn; 2]);
+    }
+    #[test]
+    fn instructions_remember_their_source_line() {
+        let lines: Vec<_> = parse("# hi\nmove(2)\n\nturn(around)")
+            .unwrap()
+            .iter()
+            .map(|i| i.line)
+            .collect();
+        assert_eq!(lines, vec![1, 1, 3, 3]);
+    }
+    #[test]
+    fn errors_quote_the_original_text() {
+        assert_eq!(
+            parse("MOVE(Fast)").unwrap_err(),
+            "Line 1: invalid instruction: MOVE(Fast)"
+        );
+        assert!(parse("move(101)").unwrap_err().contains("1–100"));
+    }
+    #[test]
+    fn repeat_alone_is_not_a_program() {
+        assert!(parse("repeat()").is_err());
+        assert!(parse("repeat()\n# still nothing\nrepeat()").is_err());
     }
     #[test]
     fn wall_blocks_motion_and_program_terminates() {
@@ -236,16 +275,14 @@ mod tests {
             position: (WIDTH - 2, 4),
             ..World::default()
         };
-        assert!(world.step(&[Instruction::Move]));
+        let program = program(&[Op::Move]);
+        assert!(world.step(&program));
         assert_eq!(world.position, (WIDTH - 2, 4));
-        assert!(!world.step(&[Instruction::Move]));
+        assert!(!world.step(&program));
     }
     #[test]
     fn parser_accepts_comments_and_reports_source_line() {
-        assert_eq!(
-            parse("# hello\nmove # go\nTURN").unwrap(),
-            vec![Instruction::Move, Instruction::Turn]
-        );
+        assert_eq!(ops("# hello\nmove # go\nTURN"), vec![Op::Move, Op::Turn]);
         assert!(parse("MOVE\n\nBOOP").unwrap_err().starts_with("Line 3:"));
         assert!(parse("# nothing").is_err());
     }
