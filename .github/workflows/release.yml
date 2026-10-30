@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  binaries:
+    name: Binaries (${{ matrix.target }})
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package and upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          name="clonk-$TAG-$TARGET"
+          mkdir "$name"
+          cp README.md CHANGELOG.md "$name/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "target/$TARGET/release/clonk.exe" "$name/"
+            7z a "$name.zip" "$name"
+            archive="$name.zip"
+          else
+            cp "target/$TARGET/release/clonk" "$name/"
+            tar czf "$name.tar.gz" "$name"
+            archive="$name.tar.gz"
+          fi
+          gh release upload "$TAG" "$archive" --clobber
