@@ -6,30 +6,21 @@ A programmable little robot colony, starting with one enthusiastic machine and e
 
 ## Play
 
-Install Rust, then run `cargo run`. The window opens with a working ore delivery program. Click **Run** to watch it, or **Step** to execute one instruction. The next instruction appears below the world.
-
-Edit the program and click **Apply & reset** to load it and restart the world. Editing pauses execution; Run and Step use the last successfully applied program. **Reset** restarts that program. The speed button toggles normal and fast execution.
+Run `cargo run`. Click **Run** to watch the starter program collect ore and build a charger, or **Step** to execute one action. The next action appears below the world. Edit the program and click **Apply & reset** to load it. Editing pauses execution; Run and Step use the last successfully applied program. Reset restarts that program.
 
 ## Instructions
 
-- `MOVE`: advance one square; walls block movement.
-- `TURN`: rotate clockwise by 90 degrees.
-- `COLLECT`: pick up one ore at the ore deposit; capacity is one.
-- `DEPOSIT`: unload at the blue home square.
-- `REPEAT`: jump back to the start of the program.
+One instruction per line. Instructions are case insensitive; blank lines and `#` comments are supported. The robot starts at home facing east.
 
-Instructions are case insensitive. Blank lines and `# comments` are supported. The robot starts facing east. A program without REPEAT stops at its end.
+- `move(5)` moves up to five squares, one action per square. Walls and chargers block movement. `move()` and `MOVE` move once.
+- `turn(left)`, `turn(right)` and `turn(around)` turn in place. `turn(left, 2)` turns twice. A bare `TURN` turns right once. Counts must be 1–100.
+- `collect()` picks up one ore at the ore deposit. Capacity is one.
+- `deposit()` stores the carried ore at home.
+- `build(charger)` spends one stored ore to build a charger in the square directly ahead. Build while standing at home, facing a free square. Only one charger can be built for now; it is decorative until batteries are added.
+- `repeat()` jumps back to the beginning. A program without it stops at the end.
+
+Commands with counts expand into individual actions, so Step and the next-action display show each movement or turn separately. Legacy bare commands still work.
 
 ## Development
 
-`cargo test` checks ore conservation, the demo delivery loop, wall collisions, program termination, and parsing. `cargo fmt --check` checks formatting. `cargo clippy --all-targets -- -D warnings` checks lints.
-
-The simulation lives in `src/sim.rs`, independent of rendering. The desktop view and controls live in `src/main.rs`.
-
-## Next experiments
-
-- Conditions, sensors, and named loops.
-- Inventory and program inspection, with execution history.
-- Multiple robots, shared resources, and increasingly unfortunate traffic.
-- Batteries, charging stations, factories, and construction.
-- Deterministic replay and a debugger that explains each CLONK.
+Run `cargo test`, `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings`. The simulation and parser live in `src/sim.rs`; the desktop view and controls live in `src/main.rs`.
