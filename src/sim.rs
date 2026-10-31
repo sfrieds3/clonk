@@ -2,7 +2,8 @@ pub const WIDTH: i32 = 12;
 pub const HEIGHT: i32 = 9;
 pub const START: (i32, i32) = (2, 4);
 pub const ORE: (i32, i32) = (7, 4);
-pub const DEMO: &str = "# CL-01 builds its first charger!\nmove(5)\ncollect()\nturn(around)\nmove(5)\ndeposit()\nturn(right)\nbuild(charger)";
+pub const BATTERY_CAPACITY: u32 = 24;
+pub const DEMO: &str = "# Build, recharge, then deliver again.\nmove(5)\ncollect()\nturn(around)\nmove(5)\ndeposit()\nturn(right)\nbuild(charger)\nrecharge()\nturn(right)\nmove(5)\ncollect()\nturn(around)\nmove(5)\ndeposit()";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Instruction {
@@ -13,6 +14,7 @@ pub enum Instruction {
     Deposit,
     Repeat,
     BuildCharger,
+    Recharge,
 }
 
 pub fn parse(source: &str) -> Result<Vec<Instruction>, String> {
@@ -66,6 +68,7 @@ pub fn parse(source: &str) -> Result<Vec<Instruction>, String> {
             "deposit" if empty() => program.push(Instruction::Deposit),
             "repeat" if empty() => program.push(Instruction::Repeat),
             "build" if args == Some("charger") => program.push(Instruction::BuildCharger),
+            "recharge" if empty() => program.push(Instruction::Recharge),
             _ => return Err(error()),
         }
         if program.len() > 10000 {
@@ -94,6 +97,9 @@ pub struct World {
     pub ore: u32,
     pub delivered: u32,
     pub charger: Option<(i32, i32)>,
+    pub energy: u32,
+    pub recharges: u32,
+    pub delivered_after_recharge: bool,
     pub pc: usize,
     pub ticks: u64,
     pub message: String,
@@ -108,6 +114,9 @@ impl Default for World {
             ore: 8,
             delivered: 0,
             charger: None,
+            energy: BATTERY_CAPACITY,
+            recharges: 0,
+            delivered_after_recharge: false,
             pc: 0,
             ticks: 0,
             message: "Meet CL-01. Enthusiasm: high. Judgment: yours.".into(),
@@ -116,11 +125,22 @@ impl Default for World {
 }
 
 impl World {
+    pub fn first_shift_complete(&self) -> bool {
+        self.charger.is_some() && self.delivered_after_recharge
+    }
+
     pub fn step(&mut self, program: &[Instruction]) -> bool {
         let Some(instruction) = program.get(self.pc) else {
             self.message = "Program finished. A remarkably quiet workplace.".into();
             return false;
         };
+        if self.energy == 0 && *instruction != Instruction::Recharge {
+            self.message = "Battery empty. Reset and plan a charging stop.".into();
+            return false;
+        }
+        if *instruction != Instruction::Recharge {
+            self.energy -= 1;
+        }
         self.ticks += 1;
         self.pc += 1;
         self.message = match instruction {
@@ -156,7 +176,18 @@ impl World {
                 } else {
                     self.delivered -= 1;
                     self.charger = Some(target);
-                    "Charger built! Power functionality coming soon."
+                    "Charger built! Face it and use recharge()."
+                }
+            }
+            Instruction::Recharge => {
+                let delta = [(1, 0), (0, 1), (-1, 0), (0, -1)][self.direction];
+                let target = (self.position.0 + delta.0, self.position.1 + delta.1);
+                if self.charger == Some(target) {
+                    self.energy = BATTERY_CAPACITY;
+                    self.recharges += 1;
+                    "Battery full. Enthusiasm was never the problem."
+                } else {
+                    "Recharge requires facing an adjacent charger."
                 }
             }
             Instruction::Collect => {
@@ -174,6 +205,7 @@ impl World {
                 if self.position == START && self.carrying {
                     self.carrying = false;
                     self.delivered += 1;
+                    self.delivered_after_recharge |= self.recharges > 0;
                     "Rock delivered. Industry has begun."
                 } else {
                     "Deposit requires a rock and the depot."
@@ -198,6 +230,10 @@ mod tests {
         let program = parse(DEMO).unwrap();
         while world.step(&program) {}
         assert_eq!(world.charger, Some((2, 3)));
+        assert!(world.first_shift_complete());
+        assert_eq!(world.delivered, 1);
+        assert_eq!(world.recharges, 1);
+        assert_eq!(world.energy, 9);
         assert_eq!(
             world.ore
                 + world.delivered
@@ -212,6 +248,113 @@ mod tests {
         world.step(&[Instruction::BuildCharger]);
         assert_eq!(world.charger, None);
         assert_eq!(world.delivered, 0);
+    }
+
+    #[test]
+    fn demo_needs_its_charging_stop() {
+        let program = parse(&DEMO.replace("recharge()\n", "")).unwrap();
+        let mut world = World::default();
+        while world.step(&program) {}
+        assert_eq!(world.energy, 0);
+        assert!(world.pc < program.len());
+        assert!(!world.first_shift_complete());
+    }
+
+    #[test]
+    fn empty_battery_does_not_advance_or_execute() {
+        let mut world = World {
+            energy: 1,
+            ..World::default()
+        };
+        let program = [Instruction::Move, Instruction::Collect];
+        assert!(world.step(&program));
+        assert_eq!(world.energy, 0);
+        assert!(!world.step(&program));
+        assert!(!world.step(&program));
+        assert_eq!(world.position, (3, 4));
+        assert_eq!(world.pc, 1);
+        assert_eq!(world.ticks, 1);
+        assert!(!world.carrying);
+    }
+
+    #[test]
+    fn recharge_works_at_zero_and_is_capped() {
+        let mut world = World {
+            energy: 0,
+            charger: Some((3, 4)),
+            ..World::default()
+        };
+        let program = [
+            Instruction::Recharge,
+            Instruction::Recharge,
+            Instruction::Turn,
+        ];
+        assert!(world.step(&program));
+        assert_eq!(world.energy, BATTERY_CAPACITY);
+        assert!(world.step(&program));
+        assert_eq!(world.energy, BATTERY_CAPACITY);
+        assert_eq!(world.recharges, 2);
+        assert!(world.step(&program));
+        assert_eq!(world.energy, BATTERY_CAPACITY - 1);
+    }
+
+    #[test]
+    fn recharge_requires_adjacent_charger_in_front() {
+        for charger in [None, Some((2, 3)), Some((4, 4))] {
+            let mut world = World {
+                energy: 3,
+                charger,
+                ..World::default()
+            };
+            assert!(world.step(&[Instruction::Recharge]));
+            assert_eq!(world.energy, 3);
+            assert_eq!(world.recharges, 0);
+            assert_eq!(world.pc, 1);
+            assert!(!world.first_shift_complete());
+        }
+    }
+
+    #[test]
+    fn failed_actions_still_cost_energy_and_chargers_block_motion() {
+        let mut world = World {
+            charger: Some((3, 4)),
+            ..World::default()
+        };
+        assert!(world.step(&[Instruction::Move]));
+        assert_eq!(world.position, START);
+        assert_eq!(world.energy, BATTERY_CAPACITY - 1);
+        assert_eq!(world.ticks, 1);
+    }
+
+    #[test]
+    fn milestone_requires_a_new_delivery_and_does_not_halt() {
+        let mut world = World {
+            charger: Some((3, 4)),
+            delivered: 1,
+            carrying: true,
+            ..World::default()
+        };
+        let program = [
+            Instruction::Recharge,
+            Instruction::Deposit,
+            Instruction::Turn,
+        ];
+        assert!(world.step(&program));
+        assert!(!world.first_shift_complete());
+        assert!(world.step(&program));
+        assert!(world.first_shift_complete());
+        assert!(world.step(&program));
+        assert_eq!(world.direction, 1);
+        assert!(!World::default().first_shift_complete());
+    }
+
+    #[test]
+    fn parser_accepts_recharge_but_not_arguments() {
+        assert_eq!(
+            parse("RECHARGE\nrecharge()").unwrap(),
+            vec![Instruction::Recharge, Instruction::Recharge]
+        );
+        assert!(parse("recharge(2)").is_err());
     }
     #[test]
     fn arguments_expand_and_old_commands_still_work() {
