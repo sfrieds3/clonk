@@ -20,6 +20,8 @@ async fn main() {
     let mut world = World::default();
     let mut source = DEMO.to_string();
     let mut program = parse(&source).unwrap();
+    let mut applied_source = source.clone();
+    let mut editor_error: Option<String> = None;
     let mut running = false;
     let mut elapsed = 0.0;
     let mut delay = 0.45;
@@ -42,8 +44,15 @@ async fn main() {
             .label("CL-01 / INSTRUCTIONS")
             .movable(false)
             .ui(&mut root_ui(), |ui| {
-                ui.label(None, "Edit, then Apply & reset.");
-                widgets::Editbox::new(hash!(), vec2(295., 360.)).ui(ui, &mut source);
+                ui.label(
+                    None,
+                    if source == applied_source {
+                        "Applied program"
+                    } else {
+                        "Unapplied edits: Run uses applied code"
+                    },
+                );
+                widgets::Editbox::new(hash!(), vec2(295., 330.)).ui(ui, &mut source);
                 compile = ui.button(None, "Apply & reset");
                 if ui.button(None, if running { "Pause" } else { "Run" }) {
                     running = !running;
@@ -53,12 +62,26 @@ async fn main() {
                 step = ui.button(None, "Step");
                 ui.same_line(0.);
                 reset = ui.button(None, "Reset");
-                if ui.button(None, "Speed: normal / fast") {
+                if ui.button(
+                    None,
+                    if delay > 0.2 {
+                        "Speed: normal"
+                    } else {
+                        "Speed: fast"
+                    },
+                ) {
                     delay = if delay > 0.2 { 0.12 } else { 0.45 };
                 }
                 ui.label(None, "move(5) / turn(left) / turn(around)");
                 ui.label(None, "collect() / deposit() / build(charger)");
-                ui.label(None, "Comments start with #");
+                ui.label(None, "recharge() / repeat() / # comments");
+                ui.label(None, "Recharge: face an adjacent charger.");
+                if let Some(error) = &editor_error {
+                    ui.label(None, "Apply failed; previous program retained:");
+                    for line in diagnostic_lines(error, 38).into_iter().take(3) {
+                        ui.label(None, &line);
+                    }
+                }
             });
         if source != previous {
             running = false;
@@ -68,14 +91,18 @@ async fn main() {
             match parse(&source) {
                 Ok(next) => {
                     program = next;
+                    applied_source = source.clone();
+                    editor_error = None;
                     world = World::default();
+                    robot_pos = vec2(START.0 as f32, START.1 as f32);
                     elapsed = 0.;
                 }
-                Err(error) => world.message = error,
+                Err(error) => editor_error = Some(error),
             }
         }
         if reset {
             world = World::default();
+            robot_pos = vec2(START.0 as f32, START.1 as f32);
             running = false;
             elapsed = 0.;
         }
@@ -93,6 +120,17 @@ async fn main() {
         robot_pos = robot_pos.lerp(
             vec2(world.position.0 as f32, world.position.1 as f32),
             (get_frame_time() * 12.).min(1.),
+        );
+        draw_text(
+            if world.first_shift_complete() {
+                "FIRST SHIFT COMPLETE. Keep building your routine."
+            } else {
+                "FIRST SHIFT: build a charger, recharge, then deliver again."
+            },
+            34.,
+            110.,
+            18.,
+            SKYBLUE,
         );
         let cell = 57.;
         let origin = vec2(34., 125.);
@@ -176,11 +214,17 @@ async fn main() {
         }
         draw_text(
             format!(
-                "DEPOT ORE  {:02}     TICK  {}     {}",
+                "ORE {:02}  BATTERY {}/{}  TICK {}  {}",
                 world.delivered,
+                world.energy,
+                BATTERY_CAPACITY,
                 world.ticks,
                 if running {
                     "WORKING, ALLEGEDLY"
+                } else if world.pc >= program.len() {
+                    "FINISHED"
+                } else if world.energy == 0 {
+                    "EMPTY"
                 } else {
                     "PAUSED"
                 }
@@ -191,6 +235,22 @@ async fn main() {
             GOLD,
         );
         draw_text(&world.message, 34., 705., 18., WHITE);
+        draw_text(
+            format!(
+                "Charger [{}]  Recharged [{}]  Delivery after recharge [{}]",
+                if world.charger.is_some() { "x" } else { " " },
+                if world.recharges > 0 { "x" } else { " " },
+                if world.delivered_after_recharge {
+                    "x"
+                } else {
+                    " "
+                }
+            ),
+            34.,
+            650.,
+            17.,
+            SKYBLUE,
+        );
         let instruction = program
             .get(world.pc)
             .map(|i| format!("{i:?}").to_uppercase())
@@ -204,4 +264,13 @@ async fn main() {
         );
         next_frame().await;
     }
+}
+
+fn diagnostic_lines(message: &str, width: usize) -> Vec<String> {
+    message
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(width)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
 }
