@@ -3,7 +3,7 @@ pub const HEIGHT: i32 = 9;
 pub const START: (i32, i32) = (2, 4);
 pub const ORE: (i32, i32) = (7, 4);
 pub const STARTING_ORE: u32 = 12;
-pub const BATTERY: u32 = 40;
+pub const BATTERY: u32 = 24;
 pub const LOW_BATTERY: u32 = 10;
 pub const CHARGER_COST: u32 = 1;
 pub const ROBOT_COST: u32 = 2;
@@ -15,6 +15,9 @@ pub const DEMO: &str = "# Every robot runs this same program.
 # Out along row 4, back along row 5,
 # and into home from the west.
 while(not ore)
+  while(robot)
+    wait()
+  end
   move()
 end
 collect()
@@ -25,6 +28,9 @@ end
 move()
 turn(right)
 while(not wall)
+  while(robot)
+    wait()
+  end
   move()
 end
 turn(right)
@@ -34,6 +40,9 @@ end
 move()
 turn(right)
 while(not home)
+  while(robot)
+    wait()
+  end
   move()
 end
 deposit()
@@ -222,7 +231,7 @@ pub fn parse(source: &str) -> Result<Vec<Instruction>, String> {
             }
             "collect" if empty() => emit(&mut program, line, Op::Collect, 1),
             "deposit" if empty() => emit(&mut program, line, Op::Deposit, 1),
-            "charge" if empty() => emit(&mut program, line, Op::Charge, 1),
+            "charge" | "recharge" if empty() => emit(&mut program, line, Op::Charge, 1),
             "wait" if empty() => emit(&mut program, line, Op::Wait, 1),
             "repeat" if empty() => emit(&mut program, line, Op::Jump(0), 1),
             "build" if args == Some("charger") => {
@@ -320,6 +329,7 @@ pub struct Robot {
     pub direction: Direction,
     pub carrying: bool,
     pub energy: u32,
+    pub recharges: u32,
     pub pc: usize,
     pub state: State,
     pub message: String,
@@ -333,6 +343,7 @@ impl Robot {
             direction,
             carrying: false,
             energy: BATTERY,
+            recharges: 0,
             pc: 0,
             state: State::Working,
             message: "Ready. Enthusiasm: high. Judgment: yours.".into(),
@@ -353,6 +364,7 @@ pub struct World {
     pub robots: Vec<Robot>,
     pub ore: u32,
     pub delivered: u32,
+    pub delivered_after_recharge: bool,
     pub chargers: Vec<(i32, i32)>,
     pub ticks: u64,
     pub message: String,
@@ -364,6 +376,7 @@ impl Default for World {
             robots: vec![Robot::new(1, START, Direction::East)],
             ore: STARTING_ORE,
             delivered: 0,
+            delivered_after_recharge: false,
             chargers: Vec::new(),
             ticks: 0,
             message: "Meet CL-01. Enthusiasm: high. Judgment: yours.".into(),
@@ -372,6 +385,10 @@ impl Default for World {
 }
 
 impl World {
+    pub fn first_shift_complete(&self) -> bool {
+        !self.chargers.is_empty() && self.delivered_after_recharge
+    }
+
     /// Advances every working robot by one action. Returns false once nobody is working.
     pub fn step(&mut self, program: &[Instruction]) -> bool {
         if !self.robots.iter().any(|r| r.state == State::Working) {
@@ -414,6 +431,10 @@ impl World {
                 }
                 op => {
                     robot.message = self.act(robot, op);
+                    if robot.state == State::PoweredDown {
+                        // Keep the unexecuted action pending when the battery runs out.
+                        robot.pc -= 1;
+                    }
                     return;
                 }
             }
@@ -490,6 +511,7 @@ impl World {
                 if robot.position == START && robot.carrying {
                     robot.carrying = false;
                     self.delivered += 1;
+                    self.delivered_after_recharge |= robot.recharges > 0;
                     "Rock delivered. Industry has begun.".into()
                 } else {
                     "Deposit requires a rock and the depot.".into()
@@ -498,6 +520,7 @@ impl World {
             Op::Charge => {
                 if self.chargers.contains(&ahead) {
                     robot.energy = BATTERY;
+                    robot.recharges += 1;
                     "Charged. Ready to make new mistakes.".into()
                 } else {
                     "Charging requires facing a charger.".into()
@@ -575,8 +598,110 @@ mod tests {
         assert_eq!(world.chargers, vec![(2, 3)]);
         assert_eq!(world.robots.len(), MAX_ROBOTS);
         assert_eq!(world.ore, 0);
+        assert!(world.first_shift_complete());
         assert!(world.robots.iter().all(|r| r.state == State::Working));
     }
+    // Keep main's original onboarding route compatible with the colony compiler.
+    const FIRST_SHIFT_DEMO: &str = "move(5)\ncollect()\nturn(around)\nmove(5)\ndeposit()\nturn(right)\nbuild(charger)\nrecharge()\nturn(right)\nmove(5)\ncollect()\nturn(around)\nmove(5)\ndeposit()";
+
+    #[test]
+    fn first_shift_route_requires_recharging_and_keeps_running_after_completion() {
+        let mut world = World::default();
+        let route = parse(&format!("{FIRST_SHIFT_DEMO}\nturn(left)")).unwrap();
+        for _ in 0..100 {
+            if !world.step(&route) {
+                break;
+            }
+        }
+        assert!(world.first_shift_complete());
+        assert_eq!(world.delivered, 1);
+        assert_eq!(world.robots[0].recharges, 1);
+        assert_eq!(world.robots[0].energy, 8);
+        assert_eq!(world.robots[0].direction, Direction::South);
+        assert_eq!(world.robots[0].state, State::Finished);
+        assert_eq!(total_ore(&world), STARTING_ORE);
+
+        let mut world = World::default();
+        let route = parse(&FIRST_SHIFT_DEMO.replace("recharge()", "wait()")).unwrap();
+        for _ in 0..100 {
+            if !world.step(&route) {
+                break;
+            }
+        }
+        assert!(!world.first_shift_complete());
+        assert_eq!(world.robots[0].state, State::PoweredDown);
+        assert_eq!(world.robots[0].energy, 0);
+    }
+
+    #[test]
+    fn recharge_alias_is_free_at_zero_and_requires_facing_a_charger() {
+        assert_eq!(ops("RECHARGE\ncharge()"), vec![Op::Charge; 2]);
+        assert!(parse("recharge(1)").is_err());
+        let mut world = World {
+            chargers: vec![(2, 3)],
+            ..World::default()
+        };
+        world.robots[0].energy = 0;
+        let route = parse("recharge()\nrecharge()\ncharge()").unwrap();
+        world.step(&route);
+        assert_eq!(world.robots[0].energy, 0);
+        assert_eq!(world.robots[0].recharges, 0);
+        assert_eq!(world.robots[0].pc, 1);
+        world.robots[0].direction = Direction::North;
+        world.step(&route);
+        world.step(&route);
+        assert_eq!(world.robots[0].energy, BATTERY);
+        assert_eq!(world.robots[0].recharges, 2);
+        assert!(!world.first_shift_complete());
+    }
+
+    #[test]
+    fn milestone_requires_a_successful_delivery_by_a_recharged_robot() {
+        let mut world = World {
+            chargers: vec![(3, 4)],
+            ..World::default()
+        };
+        world.robots.push(Robot::new(2, (4, 4), Direction::East));
+        world.robots[1].recharges = 1;
+        let mut robot = world.robots[0].clone();
+        robot.carrying = true;
+        world.act(&mut robot, Op::Deposit);
+        assert!(!world.first_shift_complete());
+        robot.recharges = 1;
+        world.act(&mut robot, Op::Deposit);
+        assert!(!world.first_shift_complete());
+        robot.carrying = true;
+        world.act(&mut robot, Op::Deposit);
+        assert!(world.first_shift_complete());
+        world.delivered = 0;
+        assert!(world.first_shift_complete());
+        assert!(!World::default().first_shift_complete());
+    }
+
+    #[test]
+    fn exhaustion_keeps_pending_action_and_does_not_stop_peers() {
+        let mut world = World::default();
+        world.robots[0].energy = 0;
+        world.robots.push(Robot::new(2, (4, 4), Direction::East));
+        world.step(&program(&[Op::Move]));
+        assert_eq!(world.robots[0].pc, 0);
+        assert_eq!(world.robots[0].position, START);
+        assert_eq!(world.robots[0].state, State::PoweredDown);
+        assert_eq!(world.robots[1].position, (5, 4));
+    }
+
+    #[test]
+    fn zero_energy_control_flow_can_reach_recharge() {
+        let mut world = World {
+            chargers: vec![(3, 4)],
+            ..World::default()
+        };
+        world.robots[0].energy = 0;
+        world.step(&parse("if(low)\nrecharge()\nend\nmove()").unwrap());
+        assert_eq!(world.robots[0].energy, BATTERY);
+        assert_eq!(world.robots[0].state, State::Working);
+    }
+
     #[test]
     fn upcoming_skips_unconditional_jumps() {
         let program = parse("move()\nwhile(not wall)\nmove()\nend\nrepeat()").unwrap();
@@ -717,6 +842,8 @@ mod tests {
         world.step(&program);
         assert_eq!(world.robots.len(), 2);
         assert_eq!(world.robots[1].position, (3, 4));
+        assert_eq!(world.robots[1].pc, 0);
+        assert_eq!(world.robots[1].energy, BATTERY);
         assert_eq!(world.delivered, 0);
         // CL-01 waits while CL-02 skips the build and moves away.
         world.step(&program);

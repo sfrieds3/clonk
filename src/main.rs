@@ -25,6 +25,7 @@ async fn main() {
     let mut source = DEMO.to_string();
     let mut program = parse(&source).unwrap();
     let mut applied = source.clone();
+    let mut editor_error: Option<String> = None;
     let mut running = false;
     let mut elapsed = 0.0;
     let mut speed = 0;
@@ -47,8 +48,15 @@ async fn main() {
             .label("COLONY / INSTRUCTIONS")
             .movable(false)
             .ui(&mut root_ui(), |ui| {
-                ui.label(None, "Edit, then Apply & reset.");
-                widgets::Editbox::new(hash!(), vec2(295., 430.)).ui(ui, &mut source);
+                ui.label(
+                    None,
+                    if source == applied {
+                        "Applied program"
+                    } else {
+                        "Unapplied edits: Run uses applied code"
+                    },
+                );
+                widgets::Editbox::new(hash!(), vec2(295., 330.)).ui(ui, &mut source);
                 compile = ui.button(None, "Apply & reset");
                 if ui.button(None, if running { "Pause" } else { "Run" }) {
                     running = !running;
@@ -67,6 +75,12 @@ async fn main() {
                 ui.label(None, "if(...) else end / while(...) end");
                 ui.label(None, "wall robot charger blocked ore home");
                 ui.label(None, "carrying low id(2) / not <sensor>");
+                if let Some(error) = &editor_error {
+                    ui.label(None, "Apply failed:");
+                    for line in diagnostic_lines(error, 38).into_iter().take(5) {
+                        ui.label(None, &line);
+                    }
+                }
             });
         if source != previous {
             running = false;
@@ -78,13 +92,16 @@ async fn main() {
                     program = next;
                     applied = source.clone();
                     world = World::default();
+                    robot_pos.clear();
+                    editor_error = None;
                     elapsed = 0.;
                 }
-                Err(error) => world.message = error,
+                Err(error) => editor_error = Some(error),
             }
         }
         if reset {
             world = World::default();
+            robot_pos.clear();
             running = false;
             elapsed = 0.;
         }
@@ -107,6 +124,17 @@ async fn main() {
                 None => robot_pos.push(target),
             }
         }
+        draw_text(
+            if world.first_shift_complete() {
+                "FIRST SHIFT COMPLETE. Keep building; this is only the beginning."
+            } else {
+                "FIRST SHIFT: build a charger, recharge, then deliver again."
+            },
+            34.,
+            110.,
+            18.,
+            SKYBLUE,
+        );
         let cell = 57.;
         let origin = vec2(34., 125.);
         for y in 0..HEIGHT {
@@ -163,6 +191,26 @@ async fn main() {
         for (robot, pos) in world.robots.iter().zip(&robot_pos) {
             draw_robot(robot, origin + vec2(pos.x * cell + 27., pos.y * cell + 25.));
         }
+        draw_text(
+            format!(
+                "Charger [{}]  Recharged [{}]  Delivery after recharge [{}]",
+                if !world.chargers.is_empty() { "x" } else { " " },
+                if world.robots.iter().any(|r| r.recharges > 0) {
+                    "x"
+                } else {
+                    " "
+                },
+                if world.delivered_after_recharge {
+                    "x"
+                } else {
+                    " "
+                },
+            ),
+            34.,
+            650.,
+            17.,
+            SKYBLUE,
+        );
         let working = world.robots.iter().any(|r| r.state == State::Working);
         draw_text(
             format!(
@@ -212,6 +260,15 @@ async fn main() {
         }
         next_frame().await;
     }
+}
+
+fn diagnostic_lines(message: &str, width: usize) -> Vec<String> {
+    message
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(width)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
 }
 
 fn truncate(text: &str, max: usize) -> String {
