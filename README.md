@@ -6,7 +6,7 @@ A programmable little robot colony, starting with one enthusiastic machine and e
 
 ## Play
 
-Run `cargo run`. Click **Run** to watch the starter program collect ore and build a charger, or **Step** to execute one action. The next action appears below the world. Edit the program and click **Apply & reset** to load it. Editing pauses execution; Run and Step use the last successfully applied program. Reset restarts that program.
+Run `just run` (or `cargo run`). Click **Run** to watch the starter program collect ore and build a charger, or **Step** to execute one action. The next action appears below the world. Edit the program and click **Apply & reset** to load it. Editing pauses execution; Run and Step use the last successfully applied program. Reset restarts that program.
 
 ## Instructions
 
@@ -23,4 +23,13 @@ Commands with counts expand into individual actions, so Step and the next-action
 
 ## Development
 
-Run `cargo test`, `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings`. The simulation and parser live in `src/sim.rs`; the desktop view and controls live in `src/main.rs`.
+With Rust and `just` installed, run `just` to list commands:
+
+- `just run` launches the game.
+- `just build` builds the desktop app.
+- `just test` runs the tests.
+- `just fmt` formats Rust source.
+- `just lint` runs strict Clippy checks.
+- `just check` checks formatting, runs tests, and runs strict Clippy without changing source files.
+
+The recipes wrap standard Cargo commands, so `just` is optional. The simulation and parser live in `src/sim.rs`; the desktop view and controls live in `src/main.rs`.
