@@ -8,7 +8,15 @@ A programmable little robot colony, starting with one enthusiastic machine and t
 
 Run `just run` (or `cargo run`). Click **Run** to watch the starter program mine ore, build a charger and assemble a colony of four robots, or **Step** to advance every robot by one action. Each robot's battery, next source line and latest complaint appear below the world. Edit the program and click **Apply & reset** to load it. Editing pauses execution; Run and Step use the last successfully applied program, with unapplied edits clearly marked. Parse errors remain in the editor panel until a successful Apply, independently of robot messages. Reset restarts the applied program and clears the world and milestone progress, not your draft. The first-shift checklist tracks building a charger, recharging, and then delivering ore with a recharged robot; completing it does not stop execution.
 
+The colony is shown as a **3D tabletop** with a fixed angled orthographic camera: raised tiles and walls, colored robots with visible facing and battery bars, carried ore, charger posts, and refinery furnaces. Cyan marks home; gold marks the ore deposit. The editor and status panels stay in 2D. This is a visual change only: scripts still run on the same flat grid, with the same movement, collisions, batteries, and resource rules. Camera rotation and zoom are not included yet.
+
 Prebuilt binaries for Linux, macOS and Windows are attached to each [GitHub release](../../releases).
+
+## A production line
+
+Choose **Refinery example**, then **Apply & reset** and **Run** to try a second loop: build a charger north of home, save up for a refinery south of home, and shuttle ore into parts. The example uses one robot so its outbound and return trips can share a lane. Early refinery builds report insufficient depot ore while the robot saves up; those attempts spend energy but no ore. The original four-robot program remains available as **Colony example**. Selecting an example changes the draft; it does not apply it or reset the world until you click **Apply & reset**.
+
+A refinery costs **2 depot ore**, is built from home into the square ahead, and blocks movement like a charger. Face it with carried ore and call `refine()` to consume that ore and add **1 part** to the shared stockpile. Refining costs 1 energy, including failed attempts. Parts are stored automatically, not carried or deposited. The **first-part milestone** celebrates the first successful conversion without stopping execution. Parts are stockpiled for now; robot and charger prices remain unchanged. Reset clears parts, refineries, and milestone progress along with the rest of the world.
 
 ## The colony
 
@@ -22,13 +30,14 @@ Every robot runs the **same program**, each with its own place in it. Robots blo
 
 One instruction per line. Instructions are case insensitive; blank lines, indentation and `#` comments are supported. CL-01 starts at home facing east.
 
-- `move(5)` moves up to five squares, one action per square. Walls, chargers and robots block movement. `move()` and `MOVE` move once.
+- `move(5)` moves up to five squares, one action per square. Walls, chargers, refineries and robots block movement. `move()` and `MOVE` move once.
 - `turn(left)`, `turn(right)` and `turn(around)` turn in place. `turn(left, 2)` turns twice; `turn(around, 2)` turns around twice. A bare `TURN` turns right once. Counts must be 1–100.
 - `collect()` picks up one ore at the ore deposit. Capacity is one.
 - `deposit()` stores the carried ore at home.
+- `refine()` converts one carried ore into one stored part while facing a refinery.
 - `charge()` (or `recharge()`) refills the battery from the charger directly ahead, even at zero energy if the robot has not powered down. An unsuccessful attempt still advances the program but costs no energy. An empty battery leaves a paid action pending and powers the robot down; use Reset or Apply & reset to retry.
 - `wait()` does nothing, for free.
-- `build(charger)` and `build(robot)` spend stored ore to build in the square directly ahead. Build while standing at home, facing a free square.
+- `build(charger)`, `build(robot)` and `build(refinery)` spend stored ore to build in the square directly ahead. Build while standing at home, facing a free square.
 - `repeat()` jumps back to the beginning. A program without it stops at the end.
 
 ### Sensors and control flow
@@ -48,6 +57,7 @@ Conditions look at the square directly ahead or at the robot itself, and any of 
 | `wall` | a wall is ahead |
 | `robot` | another robot is ahead |
 | `charger` | a charger is ahead |
+| `refinery` | a refinery is ahead |
 | `blocked` | anything is ahead that would stop a move |
 | `ore` / `home` | standing on the ore deposit / home |
 | `carrying` | holding ore |
@@ -69,6 +79,6 @@ With Rust and `just` installed, run `just` to list commands:
 - `just lint` runs strict Clippy checks.
 - `just check` checks formatting, runs tests, and runs strict Clippy without changing source files.
 
-The recipes wrap standard Cargo commands, so `just` is optional. CI runs the same checks on every pull request. The simulation and parser live in `src/sim.rs`; the desktop view and controls live in `src/main.rs`.
+The recipes wrap standard Cargo commands, so `just` is optional. CI runs the same checks on every pull request. The simulation and parser live in `src/sim.rs`, the procedural 3D world renderer lives in `src/view.rs`, and the desktop editor, HUD, and controls live in `src/main.rs`. The world renders into a depth-buffered texture before returning to screen space, keeping the 3D scene separate from the UI.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `ci:`, `refactor:`, …), and CI checks them. [release-please](https://github.com/googleapis/release-please) turns them into a release pull request with a version bump and changelog; merging it tags a release and attaches binaries.

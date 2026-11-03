@@ -1,12 +1,12 @@
 mod sim;
+mod view;
 use macroquad::prelude::*;
 use macroquad::ui::{hash, root_ui, widgets};
 use sim::*;
+use view::{BODY_COLORS, WorldView};
 
 const BG: Color = Color::new(0.10, 0.15, 0.17, 1.0);
 const GOLD: Color = Color::new(1.0, 0.75, 0.28, 1.0);
-/// Body colors, one per robot, so you can tell who is clonking whom.
-const BODIES: [u32; MAX_ROBOTS] = [0x9ae2d2, 0xf2b3c9, 0xc8bbf2, 0xf5cf96];
 const SPEEDS: [(&str, f32); 3] = [("normal", 0.45), ("fast", 0.12), ("frantic", 0.03)];
 
 fn config() -> Conf {
@@ -29,7 +29,7 @@ async fn main() {
     let mut running = false;
     let mut elapsed = 0.0;
     let mut speed = 0;
-    let mut robot_pos: Vec<Vec2> = Vec::new();
+    let mut world_view = WorldView::new();
     loop {
         clear_background(BG);
         draw_text("CLONK", 32., 59., 48., GOLD);
@@ -56,7 +56,14 @@ async fn main() {
                         "Unapplied edits: Run uses applied code"
                     },
                 );
-                widgets::Editbox::new(hash!(), vec2(295., 330.)).ui(ui, &mut source);
+                if ui.button(None, "Colony example") {
+                    source = DEMO.into();
+                }
+                ui.same_line(0.);
+                if ui.button(None, "Refinery example") {
+                    source = REFINERY_DEMO.into();
+                }
+                widgets::Editbox::new(hash!(), vec2(295., 300.)).ui(ui, &mut source);
                 compile = ui.button(None, "Apply & reset");
                 if ui.button(None, if running { "Pause" } else { "Run" }) {
                     running = !running;
@@ -70,10 +77,11 @@ async fn main() {
                     speed = (speed + 1) % SPEEDS.len();
                 }
                 ui.label(None, "move(5) turn(left) turn(around) wait()");
-                ui.label(None, "collect() deposit() charge()");
-                ui.label(None, "build(charger) build(robot) repeat()");
+                ui.label(None, "collect() deposit() charge() refine()");
+                ui.label(None, "build(charger/robot/refinery) repeat()");
                 ui.label(None, "if(...) else end / while(...) end");
-                ui.label(None, "wall robot charger blocked ore home");
+                ui.label(None, "wall robot charger refinery blocked");
+                ui.label(None, "ore home / refinery: 2 depot ore");
                 ui.label(None, "carrying low id(2) / not <sensor>");
                 if let Some(error) = &editor_error {
                     ui.label(None, "Apply failed:");
@@ -92,7 +100,7 @@ async fn main() {
                     program = next;
                     applied = source.clone();
                     world = World::default();
-                    robot_pos.clear();
+                    world_view.reset();
                     editor_error = None;
                     elapsed = 0.;
                 }
@@ -101,7 +109,7 @@ async fn main() {
         }
         if reset {
             world = World::default();
-            robot_pos.clear();
+            world_view.reset();
             running = false;
             elapsed = 0.;
         }
@@ -116,17 +124,10 @@ async fn main() {
                 running = world.step(&program);
             }
         }
-        robot_pos.truncate(world.robots.len());
-        for (i, robot) in world.robots.iter().enumerate() {
-            let target = vec2(robot.position.0 as f32, robot.position.1 as f32);
-            match robot_pos.get_mut(i) {
-                Some(pos) => *pos = pos.lerp(target, (get_frame_time() * 12.).min(1.)),
-                None => robot_pos.push(target),
-            }
-        }
+        world_view.draw(&world, get_frame_time());
         draw_text(
             if world.first_shift_complete() {
-                "FIRST SHIFT COMPLETE. Keep building; this is only the beginning."
+                "FIRST SHIFT COMPLETE. Next: build a refinery and refine ore."
             } else {
                 "FIRST SHIFT: build a charger, recharge, then deliver again."
             },
@@ -135,62 +136,6 @@ async fn main() {
             18.,
             SKYBLUE,
         );
-        let cell = 57.;
-        let origin = vec2(34., 125.);
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                let p = origin + vec2(x as f32 * cell, y as f32 * cell);
-                let color = if wall(x, y) {
-                    Color::from_hex(0x586d68)
-                } else if (x + y) % 2 == 0 {
-                    Color::from_hex(0xabbca2)
-                } else {
-                    Color::from_hex(0xa4b59c)
-                };
-                draw_rectangle(p.x, p.y, cell - 2., cell - 2., color);
-                if wall(x, y) {
-                    draw_rectangle(
-                        p.x + 5.,
-                        p.y + 5.,
-                        cell - 12.,
-                        cell - 18.,
-                        Color::from_hex(0x71847b),
-                    );
-                    draw_line(
-                        p.x + 7.,
-                        p.y + 37.,
-                        p.x + 46.,
-                        p.y + 37.,
-                        2.,
-                        Color::from_hex(0x465c58),
-                    );
-                }
-                if (x, y) == START {
-                    draw_rectangle_lines(p.x + 4., p.y + 4., cell - 11., cell - 11., 2., SKYBLUE);
-                    draw_text("HOME", p.x + 6., p.y + 47., 15., SKYBLUE);
-                }
-                if world.chargers.contains(&(x, y)) {
-                    draw_rectangle(p.x + 9., p.y + 10., 38., 39., Color::from_hex(0x486f76));
-                    draw_rectangle(p.x + 13., p.y + 7., 30., 28., Color::from_hex(0x99ded1));
-                    draw_text("+", p.x + 20., p.y + 30., 23., Color::from_hex(0x355a61));
-                    draw_circle(p.x + 39., p.y + 43., 3., GOLD);
-                }
-                if (x, y) == ORE {
-                    draw_poly(
-                        p.x + 27.,
-                        p.y + 25.,
-                        6,
-                        15.,
-                        30.,
-                        if world.ore > 0 { GOLD } else { DARKGRAY },
-                    );
-                    draw_text(world.ore.to_string(), p.x + 23., p.y + 49., 17., WHITE);
-                }
-            }
-        }
-        for (robot, pos) in world.robots.iter().zip(&robot_pos) {
-            draw_robot(robot, origin + vec2(pos.x * cell + 27., pos.y * cell + 25.));
-        }
         draw_text(
             format!(
                 "Charger [{}]  Recharged [{}]  Delivery after recharge [{}]",
@@ -207,15 +152,27 @@ async fn main() {
                 },
             ),
             34.,
-            650.,
+            674.,
             17.,
             SKYBLUE,
+        );
+        draw_text(
+            if world.production_complete() {
+                "FIRST PART COMPLETE. Production line operational."
+            } else {
+                "NEXT: build(refinery), face it with ore, then refine()."
+            },
+            34.,
+            654.,
+            17.,
+            GOLD,
         );
         let working = world.robots.iter().any(|r| r.state == State::Working);
         draw_text(
             format!(
-                "DEPOT {:02}   MINE {:02}   ROBOTS {}/{}   TICK {}   {}",
+                "ORE {:02}  PARTS {:02}  MINE {:02}  BOTS {}/{}  TICK {}  {}",
                 world.delivered,
+                world.parts,
                 world.ore,
                 world.robots.len(),
                 MAX_ROBOTS,
@@ -227,13 +184,13 @@ async fn main() {
                 }
             ),
             34.,
-            672.,
-            22.,
+            698.,
+            18.,
             GOLD,
         );
-        draw_text(&world.message, 34., 700., 18., WHITE);
+        draw_text(&world.message, 34., 724., 18., WHITE);
         for (i, robot) in world.robots.iter().enumerate() {
-            let y = 732. + i as f32 * 26.;
+            let y = 750. + i as f32 * 26.;
             let next = match robot.state {
                 State::Working => upcoming(&program, robot.pc)
                     .map(|i| {
@@ -246,7 +203,7 @@ async fn main() {
                 State::Lost => "LOST".into(),
                 State::PoweredDown => "OFFLINE".into(),
             };
-            let color = Color::from_hex(BODIES[i % BODIES.len()]);
+            let color = Color::from_hex(BODY_COLORS[i % BODY_COLORS.len()]);
             draw_text(robot.name(), 34., y, 18., color);
             let power = format!("PWR {:02}", robot.energy);
             let power_color = if robot.energy < LOW_BATTERY {
@@ -277,53 +234,4 @@ fn truncate(text: &str, max: usize) -> String {
     } else {
         text.chars().take(max - 1).chain(['…']).collect()
     }
-}
-
-fn draw_robot(robot: &Robot, p: Vec2) {
-    let offline = robot.state == State::PoweredDown;
-    let body = if offline {
-        Color::from_hex(0x8a9590)
-    } else {
-        Color::from_hex(BODIES[(robot.id as usize - 1) % BODIES.len()])
-    };
-    draw_ellipse(
-        p.x + 3.,
-        p.y + 17.,
-        21.,
-        7.,
-        0.,
-        Color::new(0.15, 0.2, 0.18, 0.3),
-    );
-    draw_circle(p.x, p.y, 20., Color::from_hex(0x386c70));
-    draw_circle(p.x, p.y - 3., 18., body);
-    draw_circle(p.x - 6., p.y - 8., 5., Color::new(1., 1., 1., 0.35));
-    let (dx, dy) = robot.direction.delta();
-    let d = vec2(dx as f32, dy as f32);
-    let side = vec2(-d.y, d.x);
-    for offset in [-5., 5.] {
-        let eye = vec2(
-            p.x + d.x * 10. + side.x * offset,
-            p.y + d.y * 10. + side.y * offset - 2.,
-        );
-        if offline {
-            draw_line(eye.x - 2., eye.y, eye.x + 2., eye.y, 1.5, BG);
-        } else {
-            draw_circle(eye.x, eye.y, 2.5, BG);
-        }
-    }
-    if robot.carrying {
-        draw_circle(p.x - 14., p.y - 15., 7., GOLD);
-    }
-    if robot.state == State::Lost {
-        draw_text("?", p.x + 10., p.y - 14., 24., WHITE);
-    }
-    draw_text(robot.id.to_string(), p.x - 4., p.y + 4., 16., BG);
-    let charge = robot.energy as f32 / BATTERY as f32;
-    let bar = if robot.energy < LOW_BATTERY {
-        RED
-    } else {
-        GREEN
-    };
-    draw_rectangle(p.x - 18., p.y + 21., 36., 4., Color::new(0., 0., 0., 0.35));
-    draw_rectangle(p.x - 18., p.y + 21., 36. * charge, 4., bar);
 }

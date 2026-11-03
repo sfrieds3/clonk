@@ -7,6 +7,7 @@ pub const BATTERY: u32 = 24;
 pub const LOW_BATTERY: u32 = 10;
 pub const CHARGER_COST: u32 = 1;
 pub const ROBOT_COST: u32 = 2;
+pub const REFINERY_COST: u32 = 2;
 pub const MAX_ROBOTS: usize = 4;
 /// Control-flow steps a robot may take in one tick before it gives up.
 const THINK_LIMIT: usize = 1000;
@@ -57,6 +58,34 @@ if(id(1))
 end
 repeat()";
 
+/// A single-robot shuttle: save depot ore for a refinery, then produce parts.
+/// Early refinery builds can fail while saving up; failed builds spend no ore.
+pub const REFINERY_DEMO: &str = "# One robot, one production line.
+# Charger north of home, refinery south.
+while(not ore)
+  move()
+end
+collect()
+turn(around)
+while(not home)
+  move()
+end
+turn(left)
+if(refinery)
+  refine()
+else
+  deposit()
+  # Save 2 depot ore; retry next trip if short.
+  build(refinery)
+end
+turn(around)
+if(not charger)
+  build(charger)
+end
+charge()
+turn(right)
+repeat()";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
     East,
@@ -93,6 +122,7 @@ impl Direction {
 pub enum Building {
     Charger,
     Robot,
+    Refinery,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -100,6 +130,7 @@ pub enum Sensor {
     Wall,
     Robot,
     Charger,
+    Refinery,
     Blocked,
     Ore,
     Home,
@@ -121,6 +152,7 @@ pub enum Op {
     TurnLeft,
     Collect,
     Deposit,
+    Refine,
     Charge,
     Wait,
     Build(Building),
@@ -167,6 +199,7 @@ fn parse_condition(text: &str) -> Option<Condition> {
         "wall" => Sensor::Wall,
         "robot" => Sensor::Robot,
         "charger" => Sensor::Charger,
+        "refinery" => Sensor::Refinery,
         "blocked" => Sensor::Blocked,
         "ore" => Sensor::Ore,
         "home" => Sensor::Home,
@@ -231,6 +264,7 @@ pub fn parse(source: &str) -> Result<Vec<Instruction>, String> {
             }
             "collect" if empty() => emit(&mut program, line, Op::Collect, 1),
             "deposit" if empty() => emit(&mut program, line, Op::Deposit, 1),
+            "refine" if empty() => emit(&mut program, line, Op::Refine, 1),
             "charge" | "recharge" if empty() => emit(&mut program, line, Op::Charge, 1),
             "wait" if empty() => emit(&mut program, line, Op::Wait, 1),
             "repeat" if empty() => emit(&mut program, line, Op::Jump(0), 1),
@@ -239,6 +273,9 @@ pub fn parse(source: &str) -> Result<Vec<Instruction>, String> {
             }
             "build" if args == Some("robot") => {
                 emit(&mut program, line, Op::Build(Building::Robot), 1)
+            }
+            "build" if args == Some("refinery") => {
+                emit(&mut program, line, Op::Build(Building::Refinery), 1)
             }
             "if" | "while" => {
                 let condition = args.and_then(parse_condition).ok_or_else(error)?;
@@ -366,6 +403,8 @@ pub struct World {
     pub delivered: u32,
     pub delivered_after_recharge: bool,
     pub chargers: Vec<(i32, i32)>,
+    pub refineries: Vec<(i32, i32)>,
+    pub parts: u32,
     pub ticks: u64,
     pub message: String,
 }
@@ -378,6 +417,8 @@ impl Default for World {
             delivered: 0,
             delivered_after_recharge: false,
             chargers: Vec::new(),
+            refineries: Vec::new(),
+            parts: 0,
             ticks: 0,
             message: "Meet CL-01. Enthusiasm: high. Judgment: yours.".into(),
         }
@@ -387,6 +428,10 @@ impl Default for World {
 impl World {
     pub fn first_shift_complete(&self) -> bool {
         !self.chargers.is_empty() && self.delivered_after_recharge
+    }
+
+    pub fn production_complete(&self) -> bool {
+        self.parts > 0
     }
 
     /// Advances every working robot by one action. Returns false once nobody is working.
@@ -447,12 +492,14 @@ impl World {
         let ahead = robot.ahead();
         let is_wall = wall(ahead.0, ahead.1);
         let is_charger = self.chargers.contains(&ahead);
+        let is_refinery = self.refineries.contains(&ahead);
         let is_robot = self.robot_at(ahead, robot.id).is_some();
         let value = match condition.sensor {
             Sensor::Wall => is_wall,
             Sensor::Robot => is_robot,
             Sensor::Charger => is_charger,
-            Sensor::Blocked => is_wall || is_charger || is_robot,
+            Sensor::Refinery => is_refinery,
+            Sensor::Blocked => is_wall || is_charger || is_refinery || is_robot,
             Sensor::Ore => robot.position == ORE,
             Sensor::Home => robot.position == START,
             Sensor::Carrying => robot.carrying,
@@ -474,18 +521,7 @@ impl World {
         robot.energy -= cost;
         let ahead = robot.ahead();
         match op {
-            Op::Move => {
-                if wall(ahead.0, ahead.1) {
-                    "CLONK. That is a wall.".into()
-                } else if self.chargers.contains(&ahead) {
-                    "CLONK. That is a charger.".into()
-                } else if let Some(other) = self.robot_at(ahead, robot.id) {
-                    format!("CLONK. That is {}.", other.name())
-                } else {
-                    robot.position = ahead;
-                    "Small steps. Questionable ambitions.".into()
-                }
-            }
+            Op::Move => self.move_robot(robot, ahead),
             Op::Turn => {
                 robot.direction = robot.direction.right();
                 "Turning clockwise. A fresh perspective.".into()
@@ -517,6 +553,16 @@ impl World {
                     "Deposit requires a rock and the depot.".into()
                 }
             }
+            Op::Refine => {
+                if robot.carrying && self.refineries.contains(&ahead) {
+                    robot.carrying = false;
+                    self.parts += 1;
+                    self.message = "Part produced. That rock has a career now.".into();
+                    self.message.clone()
+                } else {
+                    "Refining requires carried ore and a refinery ahead.".into()
+                }
+            }
             Op::Charge => {
                 if self.chargers.contains(&ahead) {
                     robot.energy = BATTERY;
@@ -532,10 +578,26 @@ impl World {
         }
     }
 
+    fn move_robot(&self, robot: &mut Robot, ahead: (i32, i32)) -> String {
+        if wall(ahead.0, ahead.1) {
+            "CLONK. That is a wall.".into()
+        } else if self.chargers.contains(&ahead) {
+            "CLONK. That is a charger.".into()
+        } else if self.refineries.contains(&ahead) {
+            "CLONK. That is a refinery.".into()
+        } else if let Some(other) = self.robot_at(ahead, robot.id) {
+            format!("CLONK. That is {}.", other.name())
+        } else {
+            robot.position = ahead;
+            "Small steps. Questionable ambitions.".into()
+        }
+    }
+
     fn build(&mut self, robot: &Robot, building: Building, target: (i32, i32)) -> String {
         let (name, cost) = match building {
             Building::Charger => ("charger", CHARGER_COST),
             Building::Robot => ("robot", ROBOT_COST),
+            Building::Refinery => ("refinery", REFINERY_COST),
         };
         if robot.position != START {
             "Build at home, facing an empty square.".into()
@@ -547,6 +609,7 @@ impl World {
             || target == ORE
             || target == START
             || self.chargers.contains(&target)
+            || self.refineries.contains(&target)
             || self.robot_at(target, robot.id).is_some()
         {
             "Cannot build there. CLONK.".into()
@@ -556,6 +619,11 @@ impl World {
                 Building::Charger => {
                     self.chargers.push(target);
                     self.message = format!("{} built a charger. Batteries rejoice.", robot.name());
+                    self.message.clone()
+                }
+                Building::Refinery => {
+                    self.refineries.push(target);
+                    self.message = format!("{} built a refinery. Rocks, reimagined.", robot.name());
                     self.message.clone()
                 }
                 Building::Robot => {
@@ -585,6 +653,8 @@ mod tests {
             + world.delivered
             + world.robots.iter().filter(|r| r.carrying).count() as u32
             + world.chargers.len() as u32 * CHARGER_COST
+            + world.refineries.len() as u32 * REFINERY_COST
+            + world.parts
             + (world.robots.len() as u32 - 1) * ROBOT_COST
     }
     #[test]
@@ -601,6 +671,188 @@ mod tests {
         assert!(world.first_shift_complete());
         assert!(world.robots.iter().all(|r| r.state == State::Working));
     }
+    #[test]
+    fn refinery_example_produces_parts_and_conserves_ore() {
+        let mut world = World::default();
+        let program = parse(REFINERY_DEMO).unwrap();
+        for _ in 0..200 {
+            assert!(world.step(&program));
+            assert_eq!(total_ore(&world), STARTING_ORE);
+            if world.production_complete() {
+                break;
+            }
+        }
+        assert_eq!(world.parts, 1);
+        assert_eq!(world.ore, 8);
+        assert_eq!(world.delivered, 0);
+        assert_eq!(world.chargers, vec![(2, 3)]);
+        assert_eq!(world.refineries, vec![(2, 5)]);
+        assert!(world.first_shift_complete());
+        for _ in 0..3000 {
+            assert!(world.step(&program));
+            assert_eq!(total_ore(&world), STARTING_ORE);
+        }
+        assert_eq!(world.parts, 9);
+        assert_eq!(world.ore, 0);
+        assert_eq!(world.robots[0].state, State::Working);
+        let reset = World::default();
+        assert!(reset.refineries.is_empty());
+        assert_eq!(reset.parts, 0);
+        assert!(!reset.production_complete());
+    }
+
+    #[test]
+    fn refinery_commands_and_sensor_parse() {
+        assert_eq!(
+            ops("BUILD(REFINERY)\nREFINE\nrefine()"),
+            vec![Op::Build(Building::Refinery), Op::Refine, Op::Refine]
+        );
+        for source in [
+            "refine(1)",
+            "build(refineries)",
+            "if(refinery(1))\nwait()\nend",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+        let mut world = World {
+            refineries: vec![(3, 4)],
+            ..World::default()
+        };
+        let program = parse("if(not refinery)\nmove()\nend\nif(blocked)\nwait()\nend").unwrap();
+        world.step(&program);
+        assert_eq!(world.robots[0].position, START);
+        assert_eq!(world.robots[0].energy, BATTERY);
+        world.robots[0].pc = 0;
+        world.step(&parse("if(refinery)\nmove()\nend").unwrap());
+        assert_eq!(world.robots[0].position, START);
+        assert_eq!(world.robots[0].energy, BATTERY - 1);
+        assert_eq!(world.robots[0].message, "CLONK. That is a refinery.");
+    }
+
+    #[test]
+    fn refinery_build_spends_depot_ore_and_an_action() {
+        let mut world = World {
+            delivered: REFINERY_COST,
+            ..World::default()
+        };
+        world.step(&parse("build(refinery)").unwrap());
+        assert_eq!(world.refineries, vec![(3, 4)]);
+        assert_eq!(world.delivered, 0);
+        assert_eq!(world.parts, 0);
+        assert_eq!(world.robots[0].energy, BATTERY - 1);
+        assert!(!world.production_complete());
+    }
+
+    #[test]
+    fn invalid_refinery_builds_preserve_resources() {
+        for case in 0..5 {
+            let mut world = World {
+                delivered: REFINERY_COST,
+                ..World::default()
+            };
+            let mut robot = world.robots[0].clone();
+            match case {
+                0 => world.delivered = REFINERY_COST - 1,
+                1 => robot.position = (4, 4),
+                2 => world.chargers.push(robot.ahead()),
+                3 => world.refineries.push(robot.ahead()),
+                _ => world
+                    .robots
+                    .push(Robot::new(2, robot.ahead(), Direction::East)),
+            }
+            let before = (world.delivered, world.refineries.len());
+            world.act(&mut robot, Op::Build(Building::Refinery));
+            assert_eq!((world.delivered, world.refineries.len()), before);
+            assert_eq!(robot.energy, BATTERY - 1);
+        }
+        for building in [Building::Charger, Building::Robot] {
+            let mut world = World {
+                delivered: 5,
+                refineries: vec![(3, 4)],
+                ..World::default()
+            };
+            world.step(&program(&[Op::Build(building)]));
+            assert_eq!(world.delivered, 5);
+            assert!(world.chargers.is_empty());
+            assert_eq!(world.robots.len(), 1);
+        }
+    }
+
+    #[test]
+    fn refining_consumes_carried_ore_not_depot_ore() {
+        let mut world = World {
+            delivered: 3,
+            refineries: vec![(3, 4)],
+            ..World::default()
+        };
+        world.robots[0].carrying = true;
+        world.robots[0].recharges = 1;
+        let program = parse("refine()\nrefine()\nwait()").unwrap();
+        world.step(&program);
+        assert_eq!(world.parts, 1);
+        assert!(!world.robots[0].carrying);
+        assert_eq!(world.robots[0].energy, BATTERY - 1);
+        assert_eq!(world.delivered, 3);
+        assert_eq!(world.ore, STARTING_ORE);
+        assert!(world.production_complete());
+        assert!(!world.delivered_after_recharge);
+        assert!(world.step(&program));
+        assert_eq!(world.parts, 1);
+        assert_eq!(world.robots[0].energy, BATTERY - 2);
+        assert_eq!(world.robots[0].state, State::Working);
+    }
+
+    #[test]
+    fn refining_requires_ore_facing_and_power() {
+        for (carrying, direction, energy) in [
+            (false, Direction::East, BATTERY),
+            (true, Direction::West, BATTERY),
+            (true, Direction::East, 0),
+        ] {
+            let mut world = World {
+                refineries: vec![(3, 4)],
+                ..World::default()
+            };
+            world.robots[0].carrying = carrying;
+            world.robots[0].direction = direction;
+            world.robots[0].energy = energy;
+            world.step(&parse("refine()").unwrap());
+            assert_eq!(world.parts, 0);
+            assert!(!world.production_complete());
+            assert_eq!(world.robots[0].carrying, carrying);
+            assert_eq!(world.robots[0].energy, energy.saturating_sub(1));
+            assert_eq!(world.robots[0].pc, usize::from(energy > 0));
+            if energy == 0 {
+                assert_eq!(world.robots[0].state, State::PoweredDown);
+            }
+        }
+        let mut world = World::default();
+        world.robots[0].carrying = true;
+        world.step(&parse("refine()").unwrap());
+        assert_eq!(world.parts, 0);
+        assert!(world.robots[0].carrying);
+    }
+
+    #[test]
+    fn robots_can_share_a_refinery_in_one_tick() {
+        let mut world = World {
+            refineries: vec![(3, 4)],
+            ..World::default()
+        };
+        world.robots.push(Robot::new(2, (4, 4), Direction::West));
+        for robot in &mut world.robots {
+            robot.carrying = true;
+        }
+        world.step(&parse("refine()").unwrap());
+        assert_eq!(world.parts, 2);
+        assert!(
+            world
+                .robots
+                .iter()
+                .all(|r| !r.carrying && r.energy == BATTERY - 1)
+        );
+    }
+
     // Keep main's original onboarding route compatible with the colony compiler.
     const FIRST_SHIFT_DEMO: &str = "move(5)\ncollect()\nturn(around)\nmove(5)\ndeposit()\nturn(right)\nbuild(charger)\nrecharge()\nturn(right)\nmove(5)\ncollect()\nturn(around)\nmove(5)\ndeposit()";
 
