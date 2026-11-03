@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/sfrieds3/clonk/compare/v0.2.0...v0.3.0) (2026-11-03)
+
+
+### Features
+
+* add refinery production and 3D tabletop rendering ([94483b6](https://github.com/sfrieds3/clonk/commit/94483b6ae2bae29b5d5f5b5c5547edc9c7a5d74c))
+
 ## [0.2.0](https://github.com/sfrieds3/clonk/compare/v0.1.0...v0.2.0) (2026-11-01)
 
 
