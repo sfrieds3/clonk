@@ -7,9 +7,90 @@ const GOLD: Color = Color::new(1.0, 0.75, 0.28, 1.0);
 const VIEW_SIZE: Vec2 = vec2(720., 500.);
 const VIEW_ORIGIN: Vec2 = vec2(24., 130.);
 
+/// Camera state is independent of simulation state and has no graphics-context dependency.
+#[derive(Clone, Copy)]
+struct CameraRig {
+    yaw: f32,
+    pitch: f32,
+    zoom: f32,
+    focus: Vec3,
+}
+
+impl Default for CameraRig {
+    fn default() -> Self {
+        Self {
+            yaw: 0.59,
+            pitch: 0.76,
+            zoom: 1.,
+            focus: vec3((WIDTH - 1) as f32 / 2., 0., (HEIGHT - 1) as f32 / 2.),
+        }
+    }
+}
+
+impl CameraRig {
+    fn direction(&self) -> Vec3 {
+        vec3(
+            self.yaw.sin() * self.pitch.cos(),
+            self.pitch.sin(),
+            self.yaw.cos() * self.pitch.cos(),
+        )
+    }
+
+    fn orbit(&mut self, delta: Vec2) {
+        self.yaw = (self.yaw - delta.x * 0.008).rem_euclid(std::f32::consts::TAU);
+        self.pitch = (self.pitch + delta.y * 0.006).clamp(0.35, 1.25);
+    }
+
+    fn zoom_by(&mut self, wheel: f32) {
+        self.zoom = (self.zoom * (-wheel * 0.12).exp()).clamp(0.35, 1.8);
+    }
+
+    fn pan(&mut self, delta: Vec2) {
+        let right = vec3(self.yaw.cos(), 0., -self.yaw.sin());
+        let back = vec3(self.yaw.sin(), 0., self.yaw.cos());
+        let scale = self.camera().fovy / VIEW_SIZE.y;
+        self.focus += (-right * delta.x - back * delta.y / self.pitch.sin()) * scale;
+        self.focus.x = self.focus.x.clamp(0., (WIDTH - 1) as f32);
+        self.focus.z = self.focus.z.clamp(0., (HEIGHT - 1) as f32);
+    }
+
+    fn camera(&self) -> Camera3D {
+        Camera3D {
+            position: self.focus + self.direction() * 40.,
+            target: self.focus,
+            up: Vec3::Y,
+            projection: Projection::Orthographics,
+            fovy: self.fit_height() * self.zoom,
+            aspect: Some(VIEW_SIZE.x / VIEW_SIZE.y),
+            z_near: 0.1,
+            z_far: 100.,
+            ..Default::default()
+        }
+    }
+
+    /// Fit the full board at any orbit angle, including its tallest buildings.
+    fn fit_height(&self) -> f32 {
+        let view = Mat4::look_at_rh(self.direction() * 40., Vec3::ZERO, Vec3::Y);
+        let mut half_height: f32 = 0.;
+        for x in [-WIDTH as f32 / 2. - 0.1, WIDTH as f32 / 2. + 0.1] {
+            for z in [-HEIGHT as f32 / 2. - 0.1, HEIGHT as f32 / 2. + 0.1] {
+                for y in [-0.52, 1.3] {
+                    let p = view.transform_vector3(vec3(x, y, z));
+                    half_height = half_height
+                        .max(p.y.abs())
+                        .max(p.x.abs() / (VIEW_SIZE.x / VIEW_SIZE.y));
+                }
+            }
+        }
+        half_height * 2. / 0.84
+    }
+}
+
 pub struct WorldView {
     target: RenderTarget,
     positions: Vec<Vec2>,
+    rig: CameraRig,
+    drag: Option<(Vec2, MouseButton)>,
 }
 
 impl WorldView {
@@ -26,6 +107,8 @@ impl WorldView {
         Self {
             target,
             positions: Vec::new(),
+            rig: CameraRig::default(),
+            drag: None,
         }
     }
 
@@ -34,6 +117,7 @@ impl WorldView {
     }
 
     pub fn draw(&mut self, world: &World, dt: f32) {
+        self.camera_input();
         self.positions.truncate(world.robots.len());
         for (i, robot) in world.robots.iter().enumerate() {
             let destination = vec2(robot.position.0 as f32, robot.position.1 as f32);
@@ -42,7 +126,7 @@ impl WorldView {
                 None => self.positions.push(destination),
             }
         }
-        let mut camera = board_camera();
+        let mut camera = self.rig.camera();
         camera.render_target = Some(self.target.clone());
         set_camera(&camera);
         clear_background(Color::from_hex(0x192b30));
@@ -63,42 +147,119 @@ impl WorldView {
                 ..Default::default()
             },
         );
-        draw_rectangle_lines(
-            VIEW_ORIGIN.x,
-            VIEW_ORIGIN.y,
-            VIEW_SIZE.x,
-            VIEW_SIZE.y,
-            1.,
-            Color::from_hex(0x355059),
-        );
-        draw_text("TABLETOP / 3D", 40., 153., 16., GRAY);
-        draw_text(
-            "CYAN: HOME   GOLD: ORE   TEAL: CHARGER   PLUM: REFINERY",
-            40.,
-            615.,
-            15.,
-            LIGHTGRAY,
-        );
+        draw_view_overlay(&camera);
+    }
+
+    fn camera_input(&mut self) {
+        let mouse = Vec2::from(mouse_position());
+        if reset_view_button().contains(mouse) && is_mouse_button_pressed(MouseButton::Left) {
+            self.rig = CameraRig::default();
+            self.drag = None;
+            return;
+        }
+        // No camera shortcuts or wheel handling over the editor or HUD.
+        if !scene_bounds().contains(mouse) {
+            self.drag = None;
+            return;
+        }
+        self.rig.zoom_by(mouse_wheel().1);
+        for button in [MouseButton::Left, MouseButton::Right] {
+            if is_mouse_button_pressed(button) {
+                self.drag = Some((mouse, button));
+            }
+        }
+        if let Some((previous, button)) = self.drag {
+            if !is_mouse_button_down(button) {
+                self.drag = None;
+                return;
+            }
+            let delta = mouse - previous;
+            if button == MouseButton::Right {
+                self.rig.pan(delta);
+            } else {
+                self.rig.orbit(delta);
+            }
+            self.drag = Some((mouse, button));
+        }
+    }
+}
+
+fn draw_view_overlay(camera: &Camera3D) {
+    // Opaque strips keep controls readable when a zoomed scene fills the texture.
+    let background = Color::from_hex(0x192b30);
+    draw_rectangle(VIEW_ORIGIN.x, VIEW_ORIGIN.y, VIEW_SIZE.x, 36., background);
+    draw_rectangle(
+        VIEW_ORIGIN.x,
+        VIEW_ORIGIN.y + VIEW_SIZE.y - 30.,
+        VIEW_SIZE.x,
+        30.,
+        background,
+    );
+    draw_rectangle_lines(
+        VIEW_ORIGIN.x,
+        VIEW_ORIGIN.y,
+        VIEW_SIZE.x,
+        VIEW_SIZE.y,
+        1.,
+        Color::from_hex(0x355059),
+    );
+    draw_text(
+        format!("{WIDTH}x{HEIGHT} | Drag orbit / Right-drag pan / Scroll zoom"),
+        40.,
+        153.,
+        15.,
+        GRAY,
+    );
+    let button = reset_view_button();
+    draw_rectangle(
+        button.x,
+        button.y,
+        button.w,
+        button.h,
+        Color::from_hex(0x355059),
+    );
+    draw_text("Reset view", button.x + 10., button.y + 17., 16., WHITE);
+    draw_compass(camera);
+    draw_text(
+        "CYAN: HOME   GOLD: ORE   TEAL: CHARGER   PLUM: REFINERY",
+        40.,
+        615.,
+        15.,
+        LIGHTGRAY,
+    );
+}
+
+fn scene_bounds() -> Rect {
+    Rect::new(
+        VIEW_ORIGIN.x,
+        VIEW_ORIGIN.y + 36.,
+        VIEW_SIZE.x,
+        VIEW_SIZE.y - 66.,
+    )
+}
+
+fn reset_view_button() -> Rect {
+    Rect::new(
+        VIEW_ORIGIN.x + VIEW_SIZE.x - 122.,
+        VIEW_ORIGIN.y + 7.,
+        110.,
+        25.,
+    )
+}
+
+fn draw_compass(camera: &Camera3D) {
+    let view = Mat4::look_at_rh(camera.position, camera.target, camera.up);
+    let origin = vec2(VIEW_ORIGIN.x + VIEW_SIZE.x - 40., VIEW_ORIGIN.y + 80.);
+    for (direction, label, color) in [(-Vec3::Z, "N", SKYBLUE), (Vec3::X, "E", GOLD)] {
+        let projected = view.transform_vector3(direction);
+        let end = origin + vec2(projected.x, -projected.y) * 22.;
+        draw_line(origin.x, origin.y, end.x, end.y, 2., color);
+        draw_text(label, end.x - 4., end.y - 4., 15., color);
     }
 }
 
 fn grid_position(position: Vec2) -> Vec3 {
     vec3(position.x, 0., position.y)
-}
-
-fn board_camera() -> Camera3D {
-    let center = vec3((WIDTH - 1) as f32 / 2., 0., (HEIGHT - 1) as f32 / 2.);
-    Camera3D {
-        position: center + vec3(10., 17., 15.),
-        target: center,
-        up: Vec3::Y,
-        projection: Projection::Orthographics,
-        fovy: 13.,
-        aspect: Some(VIEW_SIZE.x / VIEW_SIZE.y),
-        z_near: 0.1,
-        z_far: 100.,
-        ..Default::default()
-    }
 }
 
 /// Flat face shading gives procedural models depth without shaders or assets.
@@ -128,7 +289,9 @@ fn draw_tile(x: i32, z: i32) {
         vec3(0.96, 0.16, 0.96),
         Color::from_hex(color),
     );
-    if wall(x, z) {
+    if OUTER_ROCKS.contains(&(x, z)) {
+        draw_rock(p);
+    } else if wall(x, z) {
         // Low perimeter walls preserve sightlines into the colony.
         let perimeter = x == 0 || z == 0 || x == WIDTH - 1 || z == HEIGHT - 1;
         let height = if perimeter { 0.28 } else { 0.8 };
@@ -138,6 +301,24 @@ fn draw_tile(x: i32, z: i32) {
             Color::from_hex(0x71847b),
         );
     }
+}
+
+fn draw_rock(p: Vec3) {
+    block(
+        p + vec3(0., 0.18, 0.),
+        vec3(0.88, 0.36, 0.82),
+        Color::from_hex(0x938c79),
+    );
+    block(
+        p + vec3(-0.1, 0.48, 0.04),
+        vec3(0.62, 0.34, 0.58),
+        Color::from_hex(0xb0a38d),
+    );
+    block(
+        p + vec3(0.24, 0.3, -0.2),
+        vec3(0.34, 0.42, 0.38),
+        Color::from_hex(0x817e72),
+    );
 }
 
 fn draw_board(world: &World) {
@@ -304,8 +485,65 @@ mod tests {
     }
 
     #[test]
-    fn camera_fits_board_and_buildings_with_margin() {
-        let camera = board_camera();
+    fn camera_fits_board_at_every_orbit_angle() {
+        for step in 0..16 {
+            for pitch in [0.35, 0.76, 1.25] {
+                let rig = CameraRig {
+                    yaw: step as f32 * std::f32::consts::TAU / 16.,
+                    pitch,
+                    ..CameraRig::default()
+                };
+                assert_board_fits(rig.camera());
+            }
+        }
+    }
+
+    #[test]
+    fn camera_limits_keep_zoom_pitch_and_focus_usable() {
+        let mut rig = CameraRig::default();
+        rig.orbit(vec2(100000., -100000.));
+        assert!((0. ..std::f32::consts::TAU).contains(&rig.yaw));
+        assert_eq!(rig.pitch, 0.35);
+        rig.orbit(vec2(0., 100000.));
+        assert_eq!(rig.pitch, 1.25);
+        rig.zoom_by(100000.);
+        assert_eq!(rig.zoom, 0.35);
+        rig.zoom_by(-100000.);
+        assert_eq!(rig.zoom, 1.8);
+        rig.pan(vec2(100000., -100000.));
+        assert!((0. ..=(WIDTH - 1) as f32).contains(&rig.focus.x));
+        assert!((0. ..=(HEIGHT - 1) as f32).contains(&rig.focus.z));
+        assert_eq!(rig.focus.y, 0.);
+        let reset = CameraRig::default();
+        assert_eq!(reset.zoom, 1.);
+        assert_board_fits(reset.camera());
+    }
+
+    #[test]
+    fn pan_moves_ground_in_the_drag_direction() {
+        let mut rig = CameraRig::default();
+        let original = rig.focus;
+        let view = Mat4::look_at_rh(rig.direction() * 40., Vec3::ZERO, Vec3::Y);
+        rig.pan(vec2(20., 15.));
+        let screen_motion = view.transform_vector3(original - rig.focus);
+        assert!(screen_motion.x > 0.);
+        assert!(screen_motion.y < 0.);
+    }
+
+    #[test]
+    fn camera_input_bounds_exclude_editor_hud_and_reset_button() {
+        assert!(scene_bounds().contains(vec2(350., 300.)));
+        for pointer in [
+            vec2(800., 300.),
+            vec2(300., 700.),
+            vec2(300., 140.),
+            reset_view_button().center(),
+        ] {
+            assert!(!scene_bounds().contains(pointer));
+        }
+    }
+
+    fn assert_board_fits(camera: Camera3D) {
         // Camera::matrix queries the live graphics context, even with an explicit
         // aspect. Build its orthographic transform here to keep this test headless.
         let top = camera.fovy / 2.;

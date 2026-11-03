@@ -1,5 +1,17 @@
-pub const WIDTH: i32 = 12;
-pub const HEIGHT: i32 = 9;
+pub const WIDTH: i32 = 20;
+pub const HEIGHT: i32 = 14;
+/// Distant terrain leaves the starter mining and return lanes unchanged.
+pub const OUTER_ROCKS: [(i32, i32); 9] = [
+    (12, 2),
+    (13, 2),
+    (13, 3),
+    (16, 7),
+    (16, 8),
+    (17, 8),
+    (11, 10),
+    (12, 10),
+    (12, 11),
+];
 pub const START: (i32, i32) = (2, 4);
 pub const ORE: (i32, i32) = (7, 4);
 pub const STARTING_ORE: u32 = 12;
@@ -348,6 +360,7 @@ pub fn wall(x: i32, y: i32) -> bool {
         || y >= HEIGHT - 1
         || (x == 5 && (2..=3).contains(&y))
         || (x == 8 && y == 6)
+        || OUTER_ROCKS.contains(&(x, y))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1046,6 +1059,52 @@ mod tests {
         assert!(parse("if(sunny)\nmove\nend").is_err());
         assert!(parse("if(id(two))\nmove\nend").is_err());
     }
+    #[test]
+    fn expanded_map_preserves_starter_corridors_and_boundaries() {
+        for x in -1..=WIDTH {
+            assert!(wall(x, 0));
+            assert!(wall(x, HEIGHT - 1));
+        }
+        for y in -1..=HEIGHT {
+            assert!(wall(0, y));
+            assert!(wall(WIDTH - 1, y));
+        }
+        assert!(wall(-1, 4));
+        assert!(wall(WIDTH, 4));
+        assert!(wall(4, -1));
+        assert!(wall(4, HEIGHT));
+        for x in 1..WIDTH - 1 {
+            assert!(!wall(x, 4));
+        }
+        for x in 1..=ORE.0 {
+            assert!(!wall(x, 5));
+        }
+        assert!(!wall(11, 4));
+        assert!(!wall(4, 8));
+        for rock in OUTER_ROCKS {
+            assert!(wall(rock.0, rock.1));
+        }
+        assert!(!wall(14, 3));
+        assert!(!wall(15, 8));
+        assert!(!wall(13, 11));
+    }
+
+    #[test]
+    fn robots_collide_with_new_edges_and_outer_rocks() {
+        for (position, direction) in [
+            ((WIDTH - 2, HEIGHT - 2), Direction::East),
+            ((WIDTH - 2, HEIGHT - 2), Direction::South),
+            ((11, 2), Direction::East),
+        ] {
+            let mut world = World::default();
+            world.robots[0].position = position;
+            world.robots[0].direction = direction;
+            world.step(&parse("move()").unwrap());
+            assert_eq!(world.robots[0].position, position);
+            assert_eq!(world.robots[0].energy, BATTERY - 1);
+        }
+    }
+
     #[test]
     fn while_loops_follow_sensors() {
         let mut world = World::default();
