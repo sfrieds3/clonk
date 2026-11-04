@@ -21,6 +21,7 @@ fn config() -> Conf {
 
 #[macroquad::main(config)]
 async fn main() {
+    setup_typography();
     let mut world = World::default();
     let mut source = DEMO.to_string();
     let mut program = parse(&source).unwrap();
@@ -45,7 +46,7 @@ async fn main() {
         let mut reset = false;
         let mut compile = false;
         widgets::Window::new(hash!(), vec2(770., 112.), vec2(325., 700.))
-            .label("COLONY / INSTRUCTIONS")
+            .label("Colony / Instructions")
             .movable(false)
             .ui(&mut root_ui(), |ui| {
                 ui.label(
@@ -127,9 +128,9 @@ async fn main() {
         world_view.draw(&world, get_frame_time());
         draw_text(
             if world.first_shift_complete() {
-                "FIRST SHIFT COMPLETE. Next: build a refinery and refine ore."
+                "First shift complete. Next: build a refinery and refine ore."
             } else {
-                "FIRST SHIFT: build a charger, recharge, then deliver again."
+                "First shift: build a charger, recharge, then deliver again."
             },
             34.,
             110.,
@@ -158,9 +159,9 @@ async fn main() {
         );
         draw_text(
             if world.production_complete() {
-                "FIRST PART COMPLETE. Production line operational."
+                "First part complete. Production line operational."
             } else {
-                "NEXT: build(refinery), face it with ore, then refine()."
+                "Next: build(refinery), face it with ore, then refine()."
             },
             34.,
             654.,
@@ -170,7 +171,7 @@ async fn main() {
         let working = world.robots.iter().any(|r| r.state == State::Working);
         draw_text(
             format!(
-                "ORE {:02}  PARTS {:02}  MINE {:02}  BOTS {}/{}  TICK {}  {}",
+                "Ore {:02}  Parts {:02}  Mine {:02}  Bots {}/{}  Tick {}  {}",
                 world.delivered,
                 world.parts,
                 world.ore,
@@ -178,9 +179,9 @@ async fn main() {
                 MAX_ROBOTS,
                 world.ticks,
                 if running && working {
-                    "WORKING, ALLEGEDLY"
+                    "Working, allegedly"
                 } else {
-                    "PAUSED"
+                    "Paused"
                 }
             ),
             34.,
@@ -198,14 +199,14 @@ async fn main() {
                         let text = text.split('#').next().unwrap_or("").trim();
                         format!("L{:02} {}", i.line + 1, truncate(text, 22))
                     })
-                    .unwrap_or("FINISHING".into()),
-                State::Finished => "FINISHED".into(),
-                State::Lost => "LOST".into(),
-                State::PoweredDown => "OFFLINE".into(),
+                    .unwrap_or("Finishing".into()),
+                State::Finished => "Finished".into(),
+                State::Lost => "Lost".into(),
+                State::PoweredDown => "Offline".into(),
             };
             let color = Color::from_hex(BODY_COLORS[i % BODY_COLORS.len()]);
             draw_text(robot.name(), 34., y, 18., color);
-            let power = format!("PWR {:02}", robot.energy);
+            let power = format!("Pwr {:02}", robot.energy);
             let power_color = if robot.energy < LOW_BATTERY {
                 RED
             } else {
@@ -217,6 +218,68 @@ async fn main() {
         }
         next_frame().await;
     }
+}
+
+/// Embed both fonts so packaged builds need no installed fonts or asset paths.
+fn setup_typography() {
+    let sans = load_ttf_font_from_bytes(include_bytes!("../assets/fonts/Lato-Regular.ttf"))
+        .expect("bundled Lato font must be valid");
+    let mono =
+        load_ttf_font_from_bytes(include_bytes!("../assets/fonts/SourceCodePro-Regular.ttf"))
+            .expect("bundled Source Code Pro font must be valid");
+    macroquad::text::set_default_font(sans.clone());
+
+    let mut ui = root_ui();
+    let text = Color::from_hex(0xe5eeec);
+    let panel = Color::from_hex(0x24383e);
+    let label = ui
+        .style_builder()
+        .with_font(&sans)
+        .unwrap()
+        .font_size(15)
+        .text_color(text)
+        .margin(RectOffset::new(2., 2., 2., 2.))
+        .build();
+    let button = ui
+        .style_builder()
+        .with_font(&sans)
+        .unwrap()
+        .font_size(15)
+        .text_color(text)
+        .text_color_hovered(WHITE)
+        .text_color_clicked(WHITE)
+        .color(Color::from_hex(0x355059))
+        .color_hovered(Color::from_hex(0x45646c))
+        .color_clicked(Color::from_hex(0x2c454d))
+        .margin(RectOffset::new(6., 6., 4., 4.))
+        .build();
+    let title = ui
+        .style_builder()
+        .with_font(&sans)
+        .unwrap()
+        .font_size(16)
+        .text_color(text)
+        .color(panel)
+        .build();
+    let editor = ui
+        .style_builder()
+        .with_font(&mono)
+        .unwrap()
+        .font_size(16)
+        .text_color(text)
+        .color(Color::from_hex(0x192b30))
+        .color_selected(Color::from_hex(0x45646c))
+        .build();
+    let skin = macroquad::ui::Skin {
+        label_style: label,
+        button_style: button,
+        window_titlebar_style: title,
+        window_style: ui.style_builder().color(panel).build(),
+        editbox_style: editor,
+        title_height: 26.,
+        ..ui.default_skin()
+    };
+    ui.push_skin(&skin);
 }
 
 fn diagnostic_lines(message: &str, width: usize) -> Vec<String> {

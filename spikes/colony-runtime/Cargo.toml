@@ -1,0 +1,7 @@
+[package]
+name = "colony-runtime-spike"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rhai = { version = "=1.27.0", default-features = false, features = ["std", "no_module", "no_time", "no_float"] }

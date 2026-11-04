@@ -221,7 +221,7 @@ fn draw_view_overlay(camera: &Camera3D) {
     draw_text("Reset view", button.x + 10., button.y + 17., 16., WHITE);
     draw_compass(camera);
     draw_text(
-        "CYAN: HOME   GOLD: ORE   TEAL: CHARGER   PLUM: REFINERY",
+        "Cyan: home   Gold: ore   Teal: charger   Plum: refinery",
         40.,
         615.,
         15.,
