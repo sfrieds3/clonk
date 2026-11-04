@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/sfrieds3/clonk/compare/v0.3.0...v0.4.0) (2026-11-04)
+
+
+### Features
+
+* add playable colony spike and OpenSpec archive automation ([80fac6c](https://github.com/sfrieds3/clonk/commit/80fac6c1382261de46e5380bea52814f179b63ec))
+
+
+### Bug Fixes
+
+* **ci:** allow long commit body paragraphs ([92c8d11](https://github.com/sfrieds3/clonk/commit/92c8d11105d2a5e961acf7df40beb71a1c02a4f6))
+
 ## [0.3.0](https://github.com/sfrieds3/clonk/compare/v0.2.0...v0.3.0) (2026-11-03)
 
 
