@@ -8,7 +8,16 @@ A programmable little robot colony, starting with one enthusiastic machine and t
 
 Run `just run` (or `cargo run`). Click **Run** to watch the starter program mine ore, build a charger and assemble a colony of four robots, or **Step** to advance every robot by one action. Each robot's battery, next source line and latest complaint appear below the world. Edit the program and click **Apply & reset** to load it. Editing pauses execution; Run and Step use the last successfully applied program, with unapplied edits clearly marked. Parse errors remain in the editor panel until a successful Apply, independently of robot messages. Reset restarts the applied program and clears the world and milestone progress, not your draft. The first-shift checklist tracks building a charger, recharging, and then delivering ore with a recharged robot; completing it does not stop execution.
 
-The colony is shown as a **3D tabletop** with a fixed angled orthographic camera: raised tiles and walls, colored robots with visible facing and battery bars, carried ore, charger posts, and refinery furnaces. Cyan marks home; gold marks the ore deposit. The editor and status panels stay in 2D. This is a visual change only: scripts still run on the same flat grid, with the same movement, collisions, batteries, and resource rules. Camera rotation and zoom are not included yet.
+The colony is shown as a **3D tabletop** on a **20×14 world**: raised tiles and walls, distant rock clusters, colored robots with visible facing and battery bars, carried ore, charger posts, and refinery furnaces. Cyan marks home; gold marks the ore deposit. The editor and status panels stay in 2D. Interface text uses Lato, with Source Code Pro in the editor; both fonts are embedded in the binary and distributed under the SIL Open Font License (see `assets/fonts/LICENSE.css`). The original mining and return lanes are unchanged, so both starter programs still work.
+
+### Camera controls
+
+- **Left-drag** over the board to orbit and tilt.
+- **Right-drag** over the board to pan.
+- **Scroll** over the board to zoom in or out.
+- Click **Reset view** to fit the entire world again. A small north/east compass tracks the camera orientation.
+
+Camera input is restricted to the scene area, so scrolling or editing code does not move the camera. Leaving the scene cancels a drag. Reset and Apply & reset restart the simulation but preserve your camera view; **Reset view** changes only the camera. Scripts still operate on the same flat grid: the larger terrain adds space and real blocking rocks, not elevation, extra ore, or new building permissions. Batteries still hold 24 energy and construction still requires home, so distant outposts need a future gameplay expansion rather than just a longer `move()`.
 
 Prebuilt binaries for Linux, macOS and Windows are attached to each [GitHub release](../../releases).
 
@@ -80,5 +89,13 @@ With Rust and `just` installed, run `just` to list commands:
 - `just check` checks formatting, runs tests, and runs strict Clippy without changing source files.
 
 The recipes wrap standard Cargo commands, so `just` is optional. CI runs the same checks on every pull request. The simulation and parser live in `src/sim.rs`, the procedural 3D world renderer lives in `src/view.rs`, and the desktop editor, HUD, and controls live in `src/main.rs`. The world renders into a depth-buffered texture before returning to screen space, keeping the 3D scene separate from the UI.
+
+### OpenSpec / OPSX
+
+OpenSpec 1.16.0 is configured for Pi. Run `/reload` in an existing Pi session to discover `/opsx-explore`, `/opsx-propose`, `/opsx-update`, `/opsx-apply`, `/opsx-sync`, and `/opsx-archive`. Proposal creation is planning only; review a change before explicitly applying it.
+
+Planning artifacts live in this repository under `openspec/`, the authoritative OpenSpec root. No registered store is required.
+
+From this repository, `openspec list`, `openspec context --json`, and `openspec validate --all --strict` resolve this repository automatically. Initial draft changes are `select-and-migrate-3d-engine` and `add-desired-state-colony-runtime`. Their engine/runtime decisions remain gated, and they do not change the prototype's current gameplay.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `ci:`, `refactor:`, …), and CI checks them. [release-please](https://github.com/googleapis/release-please) turns them into a release pull request with a version bump and changelog; merging it tags a release and attaches binaries.

@@ -1,0 +1,24 @@
+schema: spec-driven
+
+context: |
+  CLONK planning and implementation live in this repository; openspec/ is the authoritative OpenSpec root.
+  Pull requests use final OpenSpec-Change trailers for referenced change slugs (or none); completed validated changes are archived through a reviewed automation PR.
+  CLONK is becoming an inhabited civilization simulation: the player moves a character through a modern 3D settlement and observes the consequences of code governing the colony.
+  Player code declares desired state; the simulation owns pathfinding, carrying, and persistent job execution. Repeated declarations must not duplicate work. Valid but unwise policies are allowed; do not silently rescue player mistakes.
+  Players must be able to define their own named colony commands by composing supported public operations. The scripting language and exact authoring syntax remain undecided.
+  Use an engine with built-in lighting, shadows, materials/shaders, animation, and character support rather than building a renderer on Macroquad. Engine choice is open pending a comparative spike and approval.
+  Preserve an engine-independent, headlessly testable simulation boundary. Rust reuse is desirable but is not a reason to choose an unsuitable engine.
+  Initial platform baseline is the existing Linux x86_64, macOS Apple Silicon, and Windows x86_64 releases, subject to review. Do not expand to browser, mobile, multiplayer, or a full civilization tech tree in these changes.
+  These are draft proposals, not approval to implement. Explicitly distinguish confirmed direction, proposed semantics, and unresolved decisions.
+
+rules:
+  proposal:
+    - State scope, non-goals, dependencies, and approval gates; keep under 600 words.
+  specs:
+    - Specify observable behavior with concrete WHEN/THEN scenarios, not engine-specific internals.
+  design:
+    - Record alternatives, prototype compatibility decisions, open questions, and verification evidence still needed.
+    - API examples are conceptual until the language/runtime decision is approved.
+  tasks:
+    - Keep all implementation tasks unchecked and place unresolved decision gates before dependent implementation.
+    - Include headless correctness tests, observable in-world acceptance, and desktop packaging verification where relevant.
